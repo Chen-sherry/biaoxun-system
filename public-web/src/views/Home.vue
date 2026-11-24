@@ -35,24 +35,19 @@
               <span class="filter-title">🎛️ 高级筛选（点击展开 / 收起）</span>
             </template>
             <el-row :gutter="16">
-              <el-col :span="6">
+              <el-col :xs="24" :sm="12" :span="8">
                 <el-form-item label="公告类型">
                   <el-select v-model="filter.notice_type_id" clearable placeholder="全部" style="width:100%">
                     <el-option v-for="t in noticeTypes" :key="t.id" :label="t.name" :value="t.id" />
                   </el-select>
                 </el-form-item>
               </el-col>
-              <el-col :span="6">
-                <el-form-item label="招采类型">
-                  <el-input v-model="filter.procure_type" placeholder="如 公开招标" clearable />
-                </el-form-item>
-              </el-col>
-              <el-col :span="6">
+              <el-col :xs="24" :sm="12" :span="8">
                 <el-form-item label="地区代码">
                   <el-input v-model="filter.region_code" placeholder="如 110000" clearable />
                 </el-form-item>
               </el-col>
-              <el-col :span="6">
+              <el-col :xs="24" :sm="12" :span="8">
                 <el-form-item label="客群">
                   <el-select v-model="filter.customer_group" clearable placeholder="全部" style="width:100%">
                     <el-option label="政务" value="政务" />
@@ -63,12 +58,12 @@
               </el-col>
             </el-row>
             <el-row :gutter="16">
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12" :span="12">
                 <el-form-item label="发布时间范围">
                   <el-date-picker v-model="filter.date_range" type="daterange" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width:100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :sm="12" :span="12">
                 <el-form-item label="中标时间范围">
                   <el-date-picker v-model="filter.winner_date_range" type="daterange" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width:100%" />
                 </el-form-item>
@@ -110,11 +105,11 @@
         <el-button link type="primary" @click="$router.push('/search')">查看全部 →</el-button>
       </div>
       <el-row :gutter="16">
-        <el-col v-for="b in hotBids" :key="b.id" :span="12" style="margin-bottom:12px">
+        <el-col v-for="b in hotBids" :key="b.id" :xs="24" :sm="12" :span="12" style="margin-bottom:12px">
           <div class="bid-card" @click="$router.push(`/bid/${b.id}`)">
             <div class="bid-title">{{ b.title }}</div>
             <div class="bid-meta">
-              <el-tag v-if="b.procure_type" size="small" type="primary">{{ b.procure_type }}</el-tag>
+              <el-tag v-if="b.notice_type" size="small" type="primary">{{ b.notice_type }}</el-tag>
               <span>{{ formatTime(b.publish_time) }}</span>
               <span v-if="b.region_name">· {{ b.region_name }}</span>
             </div>
@@ -141,7 +136,6 @@ const hotBids = ref<any[]>([])
 const stats = reactive({ total_bids: 0, today_new: 0, sources_enabled: 0 })
 const filter = reactive({
   notice_type_id: null as number | null,
-  procure_type: '',
   region_code: '',
   customer_group: '',
   date_range: null as any,
@@ -157,7 +151,6 @@ function onTraditionalSearch() {
   const q: any = {}
   if (aiKeyword.value.trim()) q.kw = aiKeyword.value.trim()
   if (filter.notice_type_id) q.notice_type_id = filter.notice_type_id
-  if (filter.procure_type) q.procure_type = filter.procure_type
   if (filter.region_code) q.region_code = filter.region_code
   if (filter.customer_group) q.customer_group = filter.customer_group
   if (filter.date_range) { q.date_from = filter.date_range[0]; q.date_to = filter.date_range[1] }
@@ -165,7 +158,7 @@ function onTraditionalSearch() {
   router.push({ name: 'search', query: q })
 }
 function resetFilter() {
-  filter.notice_type_id = null; filter.procure_type = ''; filter.region_code = ''
+  filter.notice_type_id = null; filter.region_code = ''
   filter.customer_group = ''; filter.date_range = null; filter.winner_date_range = null
 }
 function formatTime(t: any) {
@@ -223,4 +216,16 @@ onMounted(async () => {
 .bid-title { font-size: 15px; font-weight: 600; color: #303133; line-height: 1.5; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .bid-meta { font-size: 12px; color: #909399; display: flex; gap: 8px; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
 .bid-sub { font-size: 12px; color: #606266; }
+
+/* ===== 移动端（≤768px）===== */
+@media (max-width: 768px) {
+  .hero { padding: 28px 14px 24px; }
+  .hero-title { font-size: 22px; }
+  .hero-sub { font-size: 13px; margin-bottom: 20px; }
+  .filter-panel { padding: 4px 12px; }
+  .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 14px 0; padding: 16px 12px; margin-top: -12px; }
+  .stat-num { font-size: 22px; }
+  .content-section { padding: 0 14px; }
+  .section-header h2 { font-size: 17px; }
+}
 </style>

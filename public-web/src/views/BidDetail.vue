@@ -4,7 +4,6 @@
       <template #content>
         <h1 class="title">{{ detail.title }}</h1>
         <div class="meta">
-          <el-tag v-if="detail.procure_type" size="small">{{ detail.procure_type }}</el-tag>
           <el-tag v-if="detail.notice_type" size="small" type="success">{{ detail.notice_type }}</el-tag>
           <span>📅 发布：{{ formatTime(detail.publish_time) }}</span>
           <span v-if="detail.region_name">📍 {{ detail.region_name }}</span>
@@ -14,9 +13,8 @@
     </el-page-header>
 
     <div class="detail-card">
-      <el-descriptions :column="2" border size="small">
+      <el-descriptions :column="descColumn" border size="small">
         <el-descriptions-item label="项目编号">{{ detail.project_code || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="招采类型">{{ detail.procure_type || '—' }}</el-descriptions-item>
         <el-descriptions-item label="采购人">{{ detail.tenderee || '—' }}</el-descriptions-item>
         <el-descriptions-item label="地区">{{ detail.region_name || '—' }}</el-descriptions-item>
         <el-descriptions-item label="投标截止">{{ formatTime(detail.deadline) || '—' }}</el-descriptions-item>
@@ -40,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { fetchPublicBidDetail } from '@/api'
 
@@ -48,13 +46,19 @@ const route = useRoute()
 const loading = ref(false)
 const detail = ref<any>(null)
 
+// 详情字段表：手机单列、桌面双列
+const descColumn = ref(window.innerWidth < 768 ? 1 : 2)
+function onResize() { descColumn.value = window.innerWidth < 768 ? 1 : 2 }
+
 function formatTime(t: any) { return t ? String(t).replace('T',' ').slice(0,19) : '' }
 
 onMounted(async () => {
+  window.addEventListener('resize', onResize)
   loading.value = true
   try { detail.value = await fetchPublicBidDetail(Number(route.params.id)) } catch {}
   finally { loading.value = false }
 })
+onUnmounted(() => window.removeEventListener('resize', onResize))
 </script>
 
 <style scoped>
@@ -65,4 +69,11 @@ onMounted(async () => {
 .detail-card h3 { margin: 0 0 16px; font-size: 16px; }
 .content-body { font-size: 14px; line-height: 1.8; color: #303133; }
 .content-body :deep(img) { max-width: 100%; height: auto; }
+
+/* ===== 移动端（≤768px）===== */
+@media (max-width: 768px) {
+  .detail-page { margin: 12px auto; padding: 0 12px; }
+  .title { font-size: 16px; }
+  .detail-card { padding: 14px; }
+}
 </style>

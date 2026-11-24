@@ -77,4 +77,11 @@ async function onRegister() {
 .login-card h1 { text-align: center; margin: 0 0 8px; font-size: 22px; }
 .sub { text-align: center; color: #909399; margin: 0 0 24px; font-size: 13px; }
 .tips { text-align: center; margin-top: 12px; font-size: 12px; color: #c0c4cc; }
+
+/* ===== 移动端（≤480px）===== */
+@media (max-width: 480px) {
+  .login-page { padding: 12px; }
+  .login-card { width: 100%; max-width: 420px; padding: 28px 18px; border-radius: 12px; }
+  .login-card h1 { font-size: 19px; }
+}
 </style>

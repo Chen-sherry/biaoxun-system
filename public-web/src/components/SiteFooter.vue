@@ -37,4 +37,13 @@ const adminLink = import.meta.env.VITE_ADMIN_BASE || 'http://127.0.0.1:5173/admi
 .footer-section a, .footer-section p { display: block; color: #98a6ad; font-size: 13px; line-height: 2; }
 .footer-section .brand { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 8px; }
 .copyright { max-width: 1200px; margin: 24px auto 0; padding-top: 16px; border-top: 1px solid #3a4a5c; text-align: center; font-size: 12px; }
+
+/* ===== 移动端 ===== */
+@media (max-width: 768px) {
+  .site-footer { padding: 28px 16px 16px; margin-top: 32px; }
+  .footer-inner { grid-template-columns: 1fr 1fr; gap: 20px; }
+}
+@media (max-width: 480px) {
+  .footer-inner { grid-template-columns: 1fr; }
+}
 </style>

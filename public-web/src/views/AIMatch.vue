@@ -21,7 +21,6 @@ interface AIItem {
   tenderee?: string
   budget?: string
   region_name?: string
-  procure_type?: string
 }
 const items = ref<AIItem[]>([])
 
@@ -153,7 +152,6 @@ onMounted(async () => {
               <div class="result-meta-line">
                 <span v-if="item.tenderee">招标人：{{ item.tenderee }}</span>
                 <span v-if="item.region_name">地区：{{ item.region_name }}</span>
-                <span v-if="item.procure_type">类型：{{ item.procure_type }}</span>
                 <span v-if="item.budget">预算：{{ item.budget }}</span>
                 <span v-if="item.publish_time">发布：{{ item.publish_time.slice(0, 10) }}</span>
               </div>
@@ -235,4 +233,15 @@ onMounted(async () => {
 .recent-time { font-size: 13px; color: #909399; }
 
 .other-search { text-align: center; margin-top: 24px; }
+
+/* ===== 移动端（≤768px）===== */
+@media (max-width: 768px) {
+  .page-container { padding: 14px 10px; }
+  .card-header { flex-wrap: wrap; font-size: 15px; }
+  .card-header .sub-title { display: none; }
+  .search-area :deep(.el-input-group__append) { padding: 0 10px; }
+  .result-card { padding: 12px; }
+  .result-meta-line { gap: 8px 12px; }
+  .reason-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+}
 </style>

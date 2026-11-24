@@ -13,9 +13,6 @@
             <el-option v-for="t in noticeTypes" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="招采类型">
-          <el-input v-model="filter.procure_type" placeholder="如 公开招标" clearable style="width:140px" />
-        </el-form-item>
         <el-form-item label="地区代码">
           <el-input v-model="filter.region_code" placeholder="如 110000" clearable style="width:120px" />
         </el-form-item>
@@ -47,7 +44,6 @@
       <div v-for="b in list" :key="b.id" class="result-item" @click="$router.push(`/bid/${b.id}`)">
         <h3 class="result-title">{{ b.title }}</h3>
         <div class="result-meta">
-          <el-tag v-if="b.procure_type" size="small">{{ b.procure_type }}</el-tag>
           <el-tag v-if="b.notice_type" size="small" type="success">{{ b.notice_type }}</el-tag>
           <span>{{ formatTime(b.publish_time) }}</span>
           <span v-if="b.region_name">· {{ b.region_name }}</span>
@@ -81,7 +77,6 @@ const loading = ref(false)
 const noticeTypes = ref<any[]>([])
 const filter = reactive({
   notice_type_id: (route.query.notice_type_id ? Number(route.query.notice_type_id) : null) as number | null,
-  procure_type: (route.query.procure_type as string) || '',
   customer_group: (route.query.customer_group as string) || '',
   date_range: null as any,
   winner_date_range: null as any,
@@ -98,7 +93,6 @@ function hydrateFilterFromQuery() {
     filter.winner_date_range = [q.winner_date_from, q.winner_date_to]
   }
   if (q.notice_type_id) filter.notice_type_id = Number(q.notice_type_id)
-  if (q.procure_type) filter.procure_type = q.procure_type as string
   if (q.customer_group) filter.customer_group = q.customer_group as string
   if (q.region_code) filter.region_code = q.region_code as string
   if (q.kw) keyword.value = q.kw as string
@@ -112,7 +106,6 @@ async function loadData() {
   try {
     const q: any = { page: page.value, page_size: pageSize.value, keyword: keyword.value || undefined }
     if (filter.notice_type_id) q.notice_type_id = filter.notice_type_id
-    if (filter.procure_type) q.procure_type = filter.procure_type
     if (filter.customer_group) q.customer_group = filter.customer_group
     if (filter.region_code) q.region_code = filter.region_code
     if (filter.date_range) { q.date_from = filter.date_range[0]; q.date_to = filter.date_range[1] }
@@ -123,7 +116,7 @@ async function loadData() {
   } finally { loading.value = false }
 }
 function reset() {
-  keyword.value = ''; filter.notice_type_id = null; filter.procure_type = ''
+  keyword.value = ''; filter.notice_type_id = null
   filter.customer_group = ''; filter.date_range = null; filter.winner_date_range = null
   filter.region_code = ''; page.value = 1; loadData()
 }
@@ -152,4 +145,20 @@ onMounted(async () => {
 .result-meta { display: flex; gap: 8px; align-items: center; color: #909399; font-size: 13px; flex-wrap: wrap; }
 .result-sub { margin-top: 6px; color: #606266; font-size: 13px; }
 .pagination-wrap { display: flex; justify-content: center; margin-top: 24px; }
+
+/* ===== 移动端（≤768px）：筛选表单竖排 ===== */
+@media (max-width: 768px) {
+  .search-page { margin: 14px auto; padding: 0 12px; }
+  .filter-row { padding: 12px; }
+  .filter-row :deep(.el-form--inline) { display: flex; flex-direction: column; }
+  .filter-row :deep(.el-form--inline .el-form-item) { display: flex; width: 100%; margin: 0 0 10px; }
+  .filter-row :deep(.el-form--inline .el-form-item__label) { width: auto; padding-right: 8px; }
+  .filter-row :deep(.el-form-item__content) { flex: 1; min-width: 0; }
+  .filter-row :deep(.el-input),
+  .filter-row :deep(.el-select),
+  .filter-row :deep(.el-date-editor) { width: 100% !important; }
+  .result-title { font-size: 15px; }
+  .result-item { padding: 14px; }
+  .pagination-wrap :deep(.el-pagination) { flex-wrap: wrap; justify-content: center; row-gap: 8px; }
+}
 </style>
