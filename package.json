@@ -1,0 +1,14 @@
+{
+  "name": "biaoxun-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "标讯系统 - 政府采购/招投标信息聚合 + AI 匹配 + 订阅推送",
+  "scripts": {
+    "build": "npm --prefix admin-web run build && npm --prefix public-web run build",
+    "all": "pm2 start ecosystem.config.js",
+    "stop": "pm2 delete ecosystem.config.js"
+  },
+  "devDependencies": {
+    "pm2": "^6.0.16"
+  }
+}

@@ -1,0 +1,68 @@
+<template>
+  <div v-loading="loading" class="detail-page" v-if="detail">
+    <el-page-header @back="$router.back()" :content="detail.title">
+      <template #content>
+        <h1 class="title">{{ detail.title }}</h1>
+        <div class="meta">
+          <el-tag v-if="detail.procure_type" size="small">{{ detail.procure_type }}</el-tag>
+          <el-tag v-if="detail.notice_type" size="small" type="success">{{ detail.notice_type }}</el-tag>
+          <span>📅 发布：{{ formatTime(detail.publish_time) }}</span>
+          <span v-if="detail.region_name">📍 {{ detail.region_name }}</span>
+          <span>👁 {{ detail.view_count }}</span>
+        </div>
+      </template>
+    </el-page-header>
+
+    <div class="detail-card">
+      <el-descriptions :column="2" border size="small">
+        <el-descriptions-item label="项目编号">{{ detail.project_code || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="招采类型">{{ detail.procure_type || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="采购人">{{ detail.tenderee || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="地区">{{ detail.region_name || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="投标截止">{{ formatTime(detail.deadline) || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="预算">{{ detail.budget || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="中标单位">{{ detail.winner_unit || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="中标金额">{{ detail.win_amount ? '¥' + detail.win_amount.toLocaleString() : '—' }}</el-descriptions-item>
+        <el-descriptions-item label="中标时间">{{ formatTime(detail.winner_publish_time) || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="客群">{{ detail.customer_group || '—' }}</el-descriptions-item>
+      </el-descriptions>
+    </div>
+
+    <div class="detail-card" v-if="detail.content">
+      <h3>公告正文</h3>
+      <div class="content-body" v-html="detail.content"></div>
+    </div>
+
+    <div class="detail-card" v-if="detail.source_url">
+      <el-link :href="detail.source_url" target="_blank" type="primary">查看原文 ↗</el-link>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { fetchPublicBidDetail } from '@/api'
+
+const route = useRoute()
+const loading = ref(false)
+const detail = ref<any>(null)
+
+function formatTime(t: any) { return t ? String(t).replace('T',' ').slice(0,19) : '' }
+
+onMounted(async () => {
+  loading.value = true
+  try { detail.value = await fetchPublicBidDetail(Number(route.params.id)) } catch {}
+  finally { loading.value = false }
+})
+</script>
+
+<style scoped>
+.detail-page { max-width: 1000px; margin: 24px auto; padding: 0 24px; }
+.title { font-size: 22px; margin: 0 0 10px; line-height: 1.5; }
+.meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: #909399; font-size: 13px; margin-top: 8px; }
+.detail-card { background: #fff; border-radius: 8px; padding: 24px; margin-top: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+.detail-card h3 { margin: 0 0 16px; font-size: 16px; }
+.content-body { font-size: 14px; line-height: 1.8; color: #303133; }
+.content-body :deep(img) { max-width: 100%; height: auto; }
+</style>

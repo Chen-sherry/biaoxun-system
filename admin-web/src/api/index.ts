@@ -1,0 +1,106 @@
+import request from '@/utils/request'
+
+// 标讯列表（后台全量，含待审核）
+export function fetchBidList(params: Record<string, any>) {
+  return request.get('/api/v1/bids', { params })
+}
+
+export function fetchBidDetail(id: number) {
+  return request.get(`/api/v1/bids/${id}`)
+}
+
+export function createBid(data: Record<string, any>) {
+  return request.post('/api/v1/bids', data)
+}
+
+export function updateBid(data: Record<string, any>) {
+  return request.put('/api/v1/bids', data)
+}
+
+export function auditBid(id: number) {
+  return request.post(`/api/v1/bids/${id}/audit`)
+}
+
+export function offlineBid(id: number) {
+  return request.post(`/api/v1/bids/${id}/offline`)
+}
+
+export function toggleBidTop(id: number, top?: boolean) {
+  return request.post(`/api/v1/bids/${id}/top`, undefined, { params: { top } })
+}
+
+// 采集源
+export function fetchSourceList() {
+  return request.get('/api/v1/sources')
+}
+export function createSource(data: Record<string, any>) {
+  return request.post('/api/v1/sources', data)
+}
+export function updateSource(id: number, data: Record<string, any>) {
+  return request.put(`/api/v1/sources/${id}`, data)
+}
+export function deleteSource(id: number) {
+  return request.delete(`/api/v1/sources/${id}`)
+}
+// 爬虫全量约 3~4 分钟（12 个 ccgp 分类 + ggzy 详情），单独加大超时
+export function runCrawlAll() {
+  return request.post('/api/v1/crawl/run-all', null, { timeout: 300000 })
+}
+export function runCrawlSource(sourceId: number) {
+  return request.post(`/api/v1/crawl/run/${sourceId}`, null, { timeout: 300000 })
+}
+
+// 会员套餐
+export function fetchPackageList() {
+  return request.get('/api/v1/member-packages')
+}
+
+export function fetchOrderList(params?: Record<string, any>) {
+  return request.get('/api/v1/member-orders', { params })
+}
+
+// 管理后台用户
+export function fetchAdminUserList(params: Record<string, any>) {
+  return request.get('/api/v1/admin/users', { params })
+}
+
+export function fetchRoleList() {
+  return request.get('/api/v1/admin/users/roles')
+}
+
+// 字典
+export function fetchNoticeTypes(category?: string) {
+  return request.get('/api/v1/dicts/notice-types', { params: { category } })
+}
+
+export function fetchIndustries(parentId = 0) {
+  return request.get('/api/v1/dicts/industries', { params: { parent_id: parentId } })
+}
+
+export function fetchRegions(parentId = 0) {
+  return request.get('/api/v1/dicts/regions', { params: { parent_id: parentId } })
+}
+
+// 统计
+export function fetchStatsOverview() {
+  return request.get('/api/v1/stats/overview')
+}
+
+// 订阅管理
+export function fetchSubscribeList(params?: Record<string, any>) {
+  return request.get('/api/v1/subscribes', { params })
+}
+export function toggleSubscribe(id: number) {
+  return request.put(`/api/v1/subscribes/${id}/toggle`)
+}
+export function deleteSubscribe(id: number) {
+  return request.delete(`/api/v1/subscribes/${id}`)
+}
+
+// 数据清洗
+export function runDataClean(payload?: Record<string, any>) {
+  return request.post('/api/v1/admin/data-clean/run', payload || {})
+}
+export function fetchDataCleanStatus() {
+  return request.get('/api/v1/admin/data-clean/status')
+}
