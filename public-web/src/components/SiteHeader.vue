@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 const router = useRouter()
 const keyword = ref('')
 const token = ref(localStorage.getItem('token') || '')
+
+// 路由切换时重读登录态：登录/退出是写 localStorage 后跳转，不刷新页面，
+// 否则先挂载的头部会一直停留在旧状态（登录后仍显示"登录/注册"）
+function syncToken() { token.value = localStorage.getItem('token') || '' }
+onMounted(syncToken)
+router.afterEach(syncToken)
 
 function onSearch() {
   router.push({ name: 'search', query: { kw: keyword.value.trim() } })

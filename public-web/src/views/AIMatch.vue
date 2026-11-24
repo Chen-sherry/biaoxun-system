@@ -4,7 +4,6 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ChatLineRound, MagicStick, Clock, Search, ArrowRight } from '@element-plus/icons-vue'
 import axios from 'axios'
-import SiteHeader from '@/components/SiteHeader.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -99,7 +98,6 @@ onMounted(async () => {
 
 <template>
   <div class="ai-match-page">
-    <SiteHeader />
     <div class="page-container">
 
       <el-card shadow="never" class="main-card">
