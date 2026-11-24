@@ -25,7 +25,7 @@ logs/
 npm-debug.log*
 
 # ===== Celery =====
-celerybeat-schedule
+celerybeat-schedule*
 celerybeat.pid
 
 # ===== IDE / 系统 =====

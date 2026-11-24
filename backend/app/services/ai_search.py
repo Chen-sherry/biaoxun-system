@@ -161,7 +161,7 @@ def _query_candidates(cond: Dict[str, Any], lv: Dict[str, bool]) -> List[Dict[st
                 f"b.title LIKE :kw{i} OR b.content_text LIKE :kw{i}"
                 for i in range(len(keywords))
             ) + ")")
-        rank_expr = " + ".join(score_expr_parts) if score_expr_parts else "0"
+        rank_expr = " + ".join(score_expr_parts) if score_expr_parts else ""
 
         if lv.get("region"):
             code = str(cond.get("region_code") or "").strip()
@@ -196,6 +196,8 @@ def _query_candidates(cond: Dict[str, Any], lv: Dict[str, bool]) -> List[Dict[st
                 where.append("b.customer_group = :cg")
                 params["cg"] = cond["customer_group"]
 
+        order_clause = (f"({rank_expr}) DESC, b.publish_time DESC"
+                        if rank_expr else "b.publish_time DESC")
         sql = text(f"""
             SELECT b.id, b.title, b.tenderee, b.agency, b.procure_type,
                    b.publish_time, b.deadline, b.budget, b.winner_unit,
@@ -205,7 +207,7 @@ def _query_candidates(cond: Dict[str, Any], lv: Dict[str, bool]) -> List[Dict[st
             FROM bid_info b
             LEFT JOIN dict_region r ON r.code = b.region_code
             WHERE {' AND '.join(where)}
-            ORDER BY ({rank_expr}) DESC, b.publish_time DESC
+            ORDER BY {order_clause}
             LIMIT :lim
         """)
         params["lim"] = CANDIDATE_LIMIT

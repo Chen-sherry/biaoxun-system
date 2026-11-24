@@ -1,5 +1,6 @@
 """Celery 应用初始化（爬虫 & 推送定时任务）"""
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import settings
 
@@ -23,15 +24,15 @@ celery_app.conf.update(
         },
         "push-daily-8am": {
             "task": "app.tasks.push_tasks.push_daily_subscriptions",
-            "schedule": "0 8 * * *",
+            "schedule": crontab(minute=0, hour=8),  # 每天 8:00
         },
         "expiry-summary-9am": {
             "task": "app.tasks.push_tasks.send_expiring_bid_daily",
-            "schedule": "0 9 * * *",
+            "schedule": crontab(minute=0, hour=9),  # 每天 9:00
         },
         "archive-expired-bids": {
             "task": "app.tasks.bid_tasks.archive_expired_bids",
-            "schedule": "0 2 * * *",
+            "schedule": crontab(minute=0, hour=2),  # 每天 2:00
         },
     },
 )
