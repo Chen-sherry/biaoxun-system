@@ -200,18 +200,26 @@ GOV_KEYWORDS = ["人民政府", "人民医院", "人民法院", "检察院", "�
                 "财政局", "税务局", "教育局", "文化局", "体育局", "卫计局",
                 "农业农村局", "自然资源", "生态环境", "交通运输", "住建局",
                 "民政", "人社", "医保", "公积金", "镇政府", "乡政府", "街道办",
-                "人大", "政协", "委员会", "中共", "党委"]
+                "人大", "政协", "委员会", "中共", "党委",
+                # 事业单位 / 教育卫生科研
+                "大学", "学院", "学校", "中学", "小学", "幼儿园", "校区",
+                "医院", "卫生院", "疾控", "妇幼", "中医院", "卫生服务中心",
+                "研究院", "研究所", "设计院", "科学院", "实验室",
+                "图书馆", "博物馆", "文化馆", "体育中心", "档案馆",
+                "指挥部", "管理中心", "服务站", "执法", "监督", "管理局",
+                "基金会", "协会", "联合会", "慈善", "红十字"]
 
 SOE_KEYWORDS = ["集团", "有限责任", "股份有限", "国有", "央企", "国企",
                 "银行", "保险", "证券", "电信", "移动", "联通", "国家电网",
                 "中石油", "中石化", "中粮", "中化", "中铁", "中建", "中交",
                 "邮政", "烟草", "盐业", "黄金", "中车", "北车", "南车"]
 
-def infer_customer_group(tenderee: str, title: str = "") -> Optional[str]:
-    """政务 / 国企 / 民企"""
+# 兜底客群（关键词都匹配不上时使用；必须与前端下拉选项「政务/国企/民企」一致，否则筛不到）
+CUSTOMER_GROUP_FALLBACK = "政务"
+
+def infer_customer_group(tenderee: str, title: str = "") -> str:
+    """政务 / 国企 / 民企；都不命中时兜底「政务」，保证每条标讯都有客群"""
     blob = (tenderee or "") + " " + (title or "")
-    if not blob.strip():
-        return None
     if any(kw in blob for kw in GOV_KEYWORDS):
         return "政务"
     if any(kw in blob for kw in SOE_KEYWORDS):
@@ -219,12 +227,16 @@ def infer_customer_group(tenderee: str, title: str = "") -> Optional[str]:
     # 含有 "公司"、"企业" → 默认民企
     if "公司" in blob or "企业" in blob or "厂" in blob or "工作室" in blob:
         return "民企"
-    return None
+    return CUSTOMER_GROUP_FALLBACK
 
 
 # =====================================================
 # Step 6: 行业推断
 # =====================================================
+
+# 兜底行业（全部关键词都不命中时使用，与 dict_industry.name 对应）
+INDUSTRY_FALLBACK = "其他行业"
+
 
 # 基于 dict_industry 现有数据，先查有哪些行业
 def load_industries(conn) -> list[tuple[int, str, list[str]]]:
@@ -243,9 +255,12 @@ def load_industries(conn) -> list[tuple[int, str, list[str]]]:
         cur.close()
 
 def infer_industry_id(title: str, content_text: str, industries: list) -> Optional[int]:
-    """根据标题+内容关键词命中最多的行业"""
-    if not title and not content_text:
+    """根据标题+内容关键词命中最多的行业；一个都不中时兜底「其他行业」"""
+    if not industries:
         return None
+    fallback_id = next((i for i, n, _ in industries if n == INDUSTRY_FALLBACK), None)
+    if not title and not content_text:
+        return fallback_id
     blob = (title or "") + " " + (content_text or "")[:500]
     best_id, best_score = None, 0
     for ind_id, ind_name, keywords in industries:
@@ -253,7 +268,7 @@ def infer_industry_id(title: str, content_text: str, industries: list) -> Option
         if score > best_score:
             best_score = score
             best_id = ind_id
-    return best_id
+    return best_id if best_id is not None else fallback_id
 
 
 # =====================================================

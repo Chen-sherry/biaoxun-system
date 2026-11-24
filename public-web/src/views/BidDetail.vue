@@ -19,9 +19,9 @@
         <el-descriptions-item label="地区">{{ detail.region_name || '—' }}</el-descriptions-item>
         <el-descriptions-item label="投标截止">{{ formatTime(detail.deadline) || '—' }}</el-descriptions-item>
         <el-descriptions-item label="预算">{{ detail.budget || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="中标单位">{{ detail.winner_unit || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="中标金额">{{ detail.win_amount ? '¥' + detail.win_amount.toLocaleString() : '—' }}</el-descriptions-item>
-        <el-descriptions-item label="中标时间">{{ formatTime(detail.winner_publish_time) || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="中标单位">{{ winnerText(detail.winner_unit) }}</el-descriptions-item>
+        <el-descriptions-item label="中标金额">{{ detail.win_amount ? '¥' + detail.win_amount.toLocaleString() : winnerText(null) }}</el-descriptions-item>
+        <el-descriptions-item label="中标时间">{{ formatTime(detail.winner_publish_time) || winnerText(null) }}</el-descriptions-item>
         <el-descriptions-item label="客群">{{ detail.customer_group || '—' }}</el-descriptions-item>
       </el-descriptions>
     </div>
@@ -51,6 +51,15 @@ const descColumn = ref(window.innerWidth < 768 ? 1 : 2)
 function onResize() { descColumn.value = window.innerWidth < 768 ? 1 : 2 }
 
 function formatTime(t: any) { return t ? String(t).replace('T',' ').slice(0,19) : '' }
+
+// 尚未开标的公告类型：中标信息本来就不存在，显示「未开标」而不是「—」
+const PRE_AWARD_TYPES = ['招标公告', '采购公告', '邀请招标', '竞争性磋商公告', '竞争性谈判公告',
+  '询价公告', '单一来源公示', '资格预审公告', '采购意向', '更正公告', '答疑澄清']
+function winnerText(v: any) {
+  if (v) return v
+  const nt = detail.value?.notice_type
+  return nt && PRE_AWARD_TYPES.includes(nt) ? '未开标' : '—'
+}
 
 onMounted(async () => {
   window.addEventListener('resize', onResize)
