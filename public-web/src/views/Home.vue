@@ -17,13 +17,13 @@
           >
             <template #prefix><el-icon><MagicStick /></el-icon></template>
             <template #append>
-              <el-button :icon="MagicStick" type="primary" @click="onAiSearch">AI 智能匹配</el-button>
+              <el-button :icon="MagicStick" type="primary" @click="onAiSearch">智能检索</el-button>
             </template>
           </el-input>
           <div class="search-switch">
             <el-radio-group v-model="searchMode" size="small">
-              <el-radio-button value="ai">🤖 AI 智能（自然语言）</el-radio-button>
-              <el-radio-button value="kw">🔍 传统关键词</el-radio-button>
+              <el-radio-button value="ai">🤖 智能检索</el-radio-button>
+              <el-radio-button value="kw">🔍 高级检索</el-radio-button>
             </el-radio-group>
           </div>
         </div>

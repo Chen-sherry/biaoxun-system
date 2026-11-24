@@ -9,7 +9,7 @@
         <h4>快捷入口</h4>
         <router-link to="/">首页</router-link>
         <router-link to="/search">传统搜索</router-link>
-        <router-link to="/ai-match">AI 智能匹配</router-link>
+        <router-link to="/ai-match">智能检索</router-link>
       </div>
       <div class="footer-section">
         <h4>帮助</h4>
@@ -21,7 +21,7 @@
         <a :href="adminLink" target="_blank">管理后台</a>
       </div>
     </div>
-    <div class="copyright">© 2024 标讯速递 All Rights Reserved</div>
+    <div class="copyright">© 2026 标讯速递 All Rights Reserved</div>
   </footer>
 </template>
 

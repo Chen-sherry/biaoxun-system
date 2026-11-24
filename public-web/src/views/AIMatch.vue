@@ -103,8 +103,8 @@ onMounted(async () => {
         <template #header>
           <div class="card-header">
             <el-icon><ChatLineRound /></el-icon>
-            <span>AI 检索（大白话搜索）</span>
-            <span class="sub-title">大白话描述需求 → AI 转译检索 → 相关性评分，只展示 75 分以上的结果</span>
+            <span>智能检索</span>
+            <span class="sub-title">描述需求 → AI 转译检索 → 相关性评分，只展示 75 分以上的结果</span>
           </div>
         </template>
 
@@ -113,7 +113,7 @@ onMounted(async () => {
           <el-input
             v-model="query"
             size="large"
-            placeholder="大白话描述你要找的标讯，例如：合肥的学校招标，预算100万以内，最近一个月"
+            placeholder="描述你要找的标讯，例如：合肥的学校招标，预算100万以内，最近一个月"
             clearable
             @keyup.enter="doAiSearch"
           >

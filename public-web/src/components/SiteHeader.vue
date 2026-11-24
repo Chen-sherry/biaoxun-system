@@ -35,7 +35,7 @@ const isLoggedIn = computed(() => !!token.value)
       <nav class="nav">
         <router-link to="/" exact-active-class="active">首页</router-link>
         <router-link to="/search" active-class="active">传统搜索</router-link>
-        <router-link to="/ai-match" active-class="active">AI 智能匹配</router-link>
+        <router-link to="/ai-match" active-class="active">智能检索</router-link>
         <router-link to="/member" active-class="active">会员中心</router-link>
       </nav>
       <div class="header-right">
@@ -79,7 +79,7 @@ const isLoggedIn = computed(() => !!token.value)
       <nav class="mobile-links">
         <router-link to="/" exact-active-class="active">首页</router-link>
         <router-link to="/search" active-class="active">传统搜索</router-link>
-        <router-link to="/ai-match" active-class="active">AI 智能匹配</router-link>
+        <router-link to="/ai-match" active-class="active">智能检索</router-link>
         <router-link to="/member" active-class="active">会员中心</router-link>
       </nav>
       <div class="mobile-user">

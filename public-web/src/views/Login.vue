@@ -2,7 +2,7 @@
   <div class="login-page">
     <div class="login-card">
       <h1>🏛️ 标讯速递</h1>
-      <p class="sub">会员登录 · 享受 AI 智能匹配、订阅推送、专属会员权益</p>
+      <p class="sub">会员登录 · 享受智能检索、订阅推送、专属会员权益</p>
       <el-tabs v-model="tab" centered>
         <el-tab-pane label="登录" name="login">
           <el-form :model="loginForm" :rules="rules" ref="loginRef" @submit.prevent="onLogin">
