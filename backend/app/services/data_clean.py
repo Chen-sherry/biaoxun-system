@@ -15,7 +15,9 @@
 """
 from __future__ import annotations
 
+import os
 import re
+import sys
 import logging
 from datetime import datetime, date
 from typing import Optional
@@ -24,7 +26,14 @@ import pymysql
 
 logger = logging.getLogger(__name__)
 
-DB_CONFIG = dict(host="127.0.0.1", port=3306, user="root", password="12345", database="bid_info", charset="utf8mb4")
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # backend/
+if _BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, _BACKEND_ROOT)
+try:
+    from app.config import settings as _settings
+    DB_CONFIG = dict(host=_settings.db_host, port=int(_settings.db_port), user=_settings.db_user, password=_settings.db_password, database=_settings.db_name, charset=_settings.db_charset)
+except Exception:
+    DB_CONFIG = dict(host="127.0.0.1", port=3306, user="root", password="12345", database="bid_info", charset="utf8mb4")
 
 
 # =====================================================
@@ -78,38 +87,78 @@ def clean_date(val) -> Optional[datetime]:
 # Step 3: 公告类型推断
 # =====================================================
 
-# 按优先级排序：先匹配到的关键词生效
+# 按优先级排序：先匹配到的关键词生效（具体类型在前，通用类型在后）
+# 注意：type_name 必须与 dict_notice_type.name 完全一致，否则查不到 id
 NOTICE_TYPE_RULES = [
     # (关键词列表, dict_notice_type.name)
-    (["中标公示", "中标结果", "中标通知书"], "中标公告"),
-    (["成交公告", "成交结果", "成交公示", "成交通知"], "成交公告"),
-    (["终止公告", "终止采购", "项目终止"], "终止公告"),
-    (["废标", "流标", "失败公告", "作废"], "废标公告"),
-    (["更正公告", "变更公告", "修改公告", "补充公告"], "更正公告"),
-    (["资格预审", "预审公告"], "资格预审公告"),
-    (["单一来源公示", "单一来源说明"], "单一来源公示"),
-    (["竞争性谈判公告", "谈判公告"], "竞争性谈判"),
-    (["竞争性磋商公告", "磋商公告"], "竞争性磋商"),
-    (["询价公告", "询价采购"], "询价公告"),
-    (["邀请招标", "邀请书"], "邀请招标"),
-    (["答疑", "澄清"], "答疑澄清"),
-    (["采购意向", "意向公开", "采购计划"], "采购意向"),
-    (["公开招标", "招标公告"], "招标公告"),   # 放最后做兜底匹配
+    # —— 更正 / 澄清类 ——
+    (["更正公告", "变更公告", "修改公告", "补充公告", "更正通知", "变更"], "更正公告"),
+    (["答疑", "澄清公告", "澄清通知", "补充答疑", "澄清"], "答疑澄清"),
+    # —— 失败 / 终止类 ——
+    (["废标", "流标", "作废", "失败公告", "无效投标", "无效标"], "流标公告"),
+    (["终止公告", "中止公告", "项目终止", "终止采购", "终止"], "终止公告"),
+    # —— 资格 / 单一来源 ——
+    (["资格预审", "预审公告", "资格审查公告"], "资格预审公告"),
+    (["单一来源"], "单一来源公示"),
+    # —— 结果类（中标/成交优先于通用「结果」）——
+    (["中标公示", "中标结果", "中标通知书", "中标公告", "中标候选人", "中标", "招标结果"], "中标公告"),
+    (["成交公告", "成交结果", "成交公示", "成交通知", "中选结果", "中选公告", "中选候选人", "中选", "结果公示", "结果公告"], "成交公告"),
+    # —— 采购方式类 ——
+    (["竞争性磋商", "磋商公告", "磋商"], "竞争性磋商公告"),
+    (["竞争性谈判", "谈判公告", "谈判采购"], "竞争性谈判公告"),
+    (["询价", "询价文件"], "询价公告"),
+    (["邀请招标", "邀请书", "邀请公告"], "邀请招标"),
+    # —— 计划 / 合同类 ——
+    (["采购意向", "意向公开", "采购计划", "采购需求"], "采购意向"),
+    (["合同公告", "政府采购合同", "合同公示"], "合同公告"),
+    # —— 通用兜底 ——
+    (["公开招标", "招标公告", "招标"], "招标公告"),
+    (["采购公告", "采购项目公告", "询比", "比选", "征集", "招商", "采购"], "采购公告"),
 ]
 
-def infer_notice_type_id(title: str, conn) -> Optional[int]:
-    """根据标题关键词推断 dict_notice_type.id"""
-    if not title:
-        return None
-    for keywords, type_name in NOTICE_TYPE_RULES:
-        for kw in keywords:
-            if kw in title:
-                cur = conn.cursor()
-                cur.execute("SELECT id FROM dict_notice_type WHERE name=%s", (type_name,))
-                row = cur.fetchone()
-                cur.close()
-                return row[0] if row else None
-    return None
+# 标题与正文都匹配不上时的兜底类型：保证每条标讯都有公告类型标签
+NOTICE_TYPE_FALLBACK = "其他"
+
+
+def _load_notice_type_map(conn) -> dict:
+    """dict_notice_type 的 name -> id 映射，按连接缓存（避免逐条查库）"""
+    cached = getattr(conn, "_notice_type_map", None)
+    if isinstance(cached, dict) and cached:
+        return cached
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, name FROM dict_notice_type")
+        type_map = {name: nid for nid, name in cur.fetchall()}
+    finally:
+        cur.close()
+    try:
+        conn._notice_type_map = type_map
+    except Exception:
+        pass
+    return type_map
+
+
+def match_notice_type_name(title: str = "", content_text: str = "") -> str:
+    """按关键词匹配公告类型名；标题与正文都匹配不上时返回兜底类型「其他」"""
+    for text in (title or "", (content_text or "")[:300]):
+        if not text:
+            continue
+        for keywords, type_name in NOTICE_TYPE_RULES:
+            for kw in keywords:
+                if kw in text:
+                    return type_name
+    return NOTICE_TYPE_FALLBACK
+
+
+def infer_notice_type_id(title: str, conn, content_text: str = "") -> Optional[int]:
+    """推断 dict_notice_type.id，保证每条标讯都有标签（兜底「其他」）"""
+    type_map = _load_notice_type_map(conn)
+    type_name = match_notice_type_name(title, content_text)
+    type_id = type_map.get(type_name)
+    if type_id is None:
+        logger.warning("dict_notice_type 缺少类型「%s」，请补充字典数据", type_name)
+        type_id = type_map.get(NOTICE_TYPE_FALLBACK) or next(iter(type_map.values()), None)
+    return type_id
 
 
 # =====================================================
@@ -236,7 +285,7 @@ def clean_one(record: dict, conn) -> dict:
 
     # 分类推断
     industries = record.get("_industries") or load_industries(conn)
-    notice_type_id = record.get("notice_type_id") or infer_notice_type_id(title, conn)
+    notice_type_id = record.get("notice_type_id") or infer_notice_type_id(title, conn, content_text)
     procure_type = record.get("procure_type") or infer_procure_type(title, content_text)
     customer_group = record.get("customer_group") or infer_customer_group(tenderee, title)
     industry_id = record.get("industry_id") or infer_industry_id(title, content_text, industries)
@@ -341,8 +390,40 @@ def clean_all_seed(limit: int = 0, dry_run: bool = False) -> dict:
     return stats
 
 
+def backfill_notice_type(limit: int = 0) -> int:
+    """回填 notice_type_id 为空的存量标讯，只改这一个字段，返回更新条数"""
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        cur = conn.cursor()
+        sql = "SELECT id, title, content_text FROM bid_info WHERE notice_type_id IS NULL"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        cur.execute(sql)
+        rows = cur.fetchall()
+        updated = 0
+        for bid_id, title, content_text in rows:
+            type_id = infer_notice_type_id(title or "", conn, content_text or "")
+            if type_id is None:
+                continue
+            cur.execute("UPDATE bid_info SET notice_type_id=%s, updated_at=NOW() WHERE id=%s", (type_id, bid_id))
+            updated += 1
+            if updated % 500 == 0:
+                conn.commit()
+                print(f"  ... {updated}/{len(rows)}")
+        conn.commit()
+        cur.close()
+        print(f"公告类型回填完成：待处理 {len(rows)} 条，已更新 {updated} 条")
+        return updated
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     import sys
     dry_run = "--dry-run" in sys.argv
     limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 0
-    clean_all_seed(limit=limit, dry_run=dry_run)
+    if "--notice-type" in sys.argv:
+        # 只回填公告类型（存量数据打标签）
+        backfill_notice_type(limit=limit)
+    else:
+        clean_all_seed(limit=limit, dry_run=dry_run)

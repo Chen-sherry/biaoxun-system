@@ -279,7 +279,7 @@ def _map_to_bid_info(
     title = raw["title"]
     notice_type_id = raw.get("notice_type_id")
     if not notice_type_id and conn is not None:
-        notice_type_id = infer_notice_type_id(title, conn)
+        notice_type_id = infer_notice_type_id(title, conn, content_text)
 
     procure_type = raw.get("procure_type") or infer_procure_type(title, content_text)
     customer_group = raw.get("customer_group") or infer_customer_group(
