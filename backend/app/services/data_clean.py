@@ -305,7 +305,9 @@ def clean_one(record: dict, conn) -> dict:
     customer_group = record.get("customer_group") or infer_customer_group(tenderee, title)
     industry_id = record.get("industry_id") or infer_industry_id(title, content_text, industries)
 
-    return {
+    # 正文字段提取（2026-11-26 接入最新逻辑，与爬虫入库/补抓脚本同一实现）：
+    # 截止时间 / 项目编号 / 地区 / 单位 / 金额 —— 只补空字段，不覆盖已有值
+    out = {
         **record,
         "content_text": content_text,
         "publish_time": publish_time,
@@ -316,6 +318,18 @@ def clean_one(record: dict, conn) -> dict:
         "customer_group": customer_group,
         "industry_id": industry_id,
     }
+    try:
+        extra = extract_fields_from_text(
+            title, content_text, conn=conn,
+            current={"deadline": out.get("deadline"),
+                     "project_code": out.get("project_code"),
+                     "region_code": out.get("region_code"),
+                     "tenderee": out.get("tenderee") or None,
+                     "budget": out.get("budget")})
+        out.update(extra)
+    except Exception:
+        logger.warning("clean_one extract_fields failed id=%s", record.get("id"), exc_info=True)
+    return out
 
 
 # =====================================================
@@ -345,6 +359,7 @@ def clean_all_seed(limit: int = 0, dry_run: bool = False) -> dict:
         "procure_type_filled": 0,
         "customer_group_filled": 0,
         "industry_filled": 0,
+        "fields_extracted": 0,   # 正文字段提取补空（截止/编号/地区/单位/金额）
         "rows_processed": 0,
     }
 
@@ -352,7 +367,7 @@ def clean_all_seed(limit: int = 0, dry_run: bool = False) -> dict:
         cur.execute(
             "SELECT id, title, content, content_text, tenderee, publish_time, "
             "winner_publish_time, deadline, notice_type_id, procure_type, "
-            "customer_group, industry_id "
+            "customer_group, industry_id, project_code, region_code, budget "
             "FROM bid_info WHERE id=%s", (bid_id,)
         )
         row = dict(zip([d[0] for d in cur.description], cur.fetchone()))
@@ -365,7 +380,8 @@ def clean_all_seed(limit: int = 0, dry_run: bool = False) -> dict:
 
         diffs = []
         for col in ("content_text", "publish_time", "winner_publish_time", "deadline",
-                    "notice_type_id", "procure_type", "customer_group", "industry_id"):
+                    "notice_type_id", "procure_type", "customer_group", "industry_id",
+                    "project_code", "region_code", "tenderee", "budget"):
             if cleaned.get(col) != original.get(col):
                 diffs.append(col)
 
@@ -387,6 +403,8 @@ def clean_all_seed(limit: int = 0, dry_run: bool = False) -> dict:
             stats["customer_group_filled"] += 1
         if "industry_id" in diffs and original.get("industry_id") is None:
             stats["industry_filled"] += 1
+        if any(c in diffs for c in ("project_code", "region_code", "tenderee", "budget")):
+            stats["fields_extracted"] += 1
         stats["rows_processed"] += 1
 
         if stats["rows_processed"] % 1000 == 0:
