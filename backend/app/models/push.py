@@ -44,6 +44,8 @@ class PushTemplate(Base):
     weekday = Column(Integer, nullable=True, comment="weekly 时 0=周一..6=周日")
     title = Column(String(255), nullable=False, comment="消息标题（## 前缀由发送层加）")
     content = Column(Text, nullable=False, comment="模板正文，{var} 占位符")
+    default_title = Column(String(255), nullable=True, comment="默认标题快照（应用为默认时写入）")
+    default_content = Column(Text, nullable=True, comment="默认正文快照（应用为默认时写入）")
     variables = Column(String(500), nullable=False, default="",
                        comment="可用变量清单（逗号分隔）")
     enabled = Column(Integer, nullable=False, default=1, comment="1 启用 0 停用（到点跳过）")

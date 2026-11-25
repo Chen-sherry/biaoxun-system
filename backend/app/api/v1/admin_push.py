@@ -47,6 +47,7 @@ class TemplateIn(BaseModel):
     schedule_time: Optional[str] = None   # HH:MM（M5 执行时间调整）
     frequency: Optional[str] = None       # daily / weekly（custom）
     weekday: Optional[int] = None         # 0=周一..6=周日
+    apply_default: Optional[bool] = None  # True=同时把当前文案存为默认快照
 
 
 class TemplateCreateIn(BaseModel):
@@ -98,6 +99,10 @@ def save_template(code: str, payload: TemplateIn, db: Session = Depends(get_db),
     t.updated_by = user.id
     from datetime import datetime
     t.updated_at = datetime.now()
+    if payload.apply_default:
+        # 「应用为默认模板」：把保存后的文案同时写入默认快照
+        t.default_title = t.title
+        t.default_content = t.content
     db.commit()
     return ApiResponse.ok(pts.template_to_dict(t), msg="模板已保存（执行时间即时生效）")
 
@@ -169,7 +174,6 @@ class RenderIn(BaseModel):
 def _build_real_vars(db: Session, code: str) -> dict:
     """用真实数据构造模板变量（预览/测试发送共用）"""
     from datetime import datetime, timedelta
-    from collections import Counter
     from app.models.bid import BidInfo
 
     now = datetime.now()
@@ -199,22 +203,14 @@ def _build_real_vars(db: Session, code: str) -> dict:
         return {"date": now.strftime("%Y-%m-%d"), "count": str(len(rows)),
                 "bid_list": bid_list}
 
-    # daily_summary：昨日新增
-    since = today_start - timedelta(days=1)
+    # daily_summary：近 24 小时新增（最新 3 条带链接，与任务逻辑一致）
+    since = datetime.now() - timedelta(hours=24)
     rows = (db.query(BidInfo)
-            .filter(BidInfo.status == 1, BidInfo.created_at >= since,
-                    BidInfo.created_at < today_start).all())
-    titles = " ".join((r.title or "") for r in rows)
-    seed_kw = ["招标", "中标", "采购", "询价", "磋商", "工程", "服务", "货物",
-               "监理", "设计", "施工", "运维", "物业", "信息化", "设备"]
-    cnt = Counter({k: titles.count(k) for k in seed_kw if titles.count(k) > 0})
-    top_keywords = "\n".join(f"> - {k}（{v}）" for k, v in cnt.most_common(10)) or "> （无）"
-    regions = Counter((r.region_code or "未知") for r in rows)
-    top_regions = "\n".join(f"> - {k}（{v}）" for k, v in regions.most_common(6))
+            .filter(BidInfo.status == 1, BidInfo.created_at >= since)
+            .order_by(BidInfo.publish_time.desc()).all())
     bid_list = "\n".join(
-        f"- [{(r.title or '')[:40]}]({r.source_url or ''})" for r in rows[:15]) or "（无）"
-    return {"date": today_start.strftime("%Y-%m-%d"), "count": str(len(rows)),
-            "top_keywords": top_keywords, "top_regions": top_regions,
+        f"- [{(r.title or '')[:60]}]({r.source_url or ''})" for r in rows[:3]) or "（无）"
+    return {"date": datetime.now().strftime("%Y-%m-%d"), "count": str(len(rows)),
             "bid_list": bid_list}
 
 

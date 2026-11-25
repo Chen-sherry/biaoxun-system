@@ -119,7 +119,10 @@
           </el-form-item>
 
           <div class="drawer-actions">
-            <el-button v-if="editing.kind !== 'custom'" @click="resetDefault">恢复默认文案</el-button>
+            <el-button @click="resetDefault">恢复默认文案</el-button>
+            <el-button type="success" plain @click="doSaveAsDefault" :loading="saving">
+              应用为默认模板
+            </el-button>
             <el-button @click="liveRender" :loading="previewing === editing.code">用真实数据预览</el-button>
             <el-button type="warning" plain @click="doTest(editing.code, true)" :loading="testing === editing.code">测试发送</el-button>
             <el-button type="primary" @click="doSave" :loading="saving">保存模板</el-button>
@@ -209,8 +212,8 @@ const meta: Record<string, { name: string }> = {
 // 内置默认文案（恢复默认用）
 const DEFAULTS: Record<string, { title: string; content: string }> = {
   daily_summary: {
-    title: '📢 {date} 新增标讯汇总',
-    content: '**新增数量**：{count} 条\n\n**Top 关键词**：\n{top_keywords}\n{top_regions}',
+    title: '今日新增{count}条标讯',
+    content: '**最新标讯**：\n{bid_list}',
   },
   expiring_alert: {
     title: '⏰ {date} 截止时间临近预警',
@@ -369,12 +372,40 @@ async function doSave() {
   }
 }
 
+/** 应用为默认模板：保存当前文案 + 写入默认快照（恢复默认时回到这份） */
+async function doSaveAsDefault() {
+  if (!editing.value) return
+  saving.value = true
+  try {
+    await savePushTemplate(editing.value.code, {
+      name: editing.value.name,
+      title: editing.value.title,
+      content: editing.value.content,
+      schedule_time: editing.value.schedule_time,
+      frequency: editing.value.frequency,
+      weekday: editing.value.weekday,
+      apply_default: true,
+    })
+    editing.value.default_title = editing.value.title
+    editing.value.default_content = editing.value.content
+    ElMessage.success('已保存并应用为默认模板')
+    drawer.value = false
+    await load()
+  } finally {
+    saving.value = false
+  }
+}
+
 function resetDefault() {
-  const d = DEFAULTS[editing.value.code]
-  if (!d) return
-  editing.value.title = d.title
-  editing.value.content = d.content
+  // 优先用库里的默认快照（用户点过「应用为默认模板」），否则用内置出厂文案
+  const snap = editing.value.default_content
+    ? { title: editing.value.default_title || '', content: editing.value.default_content }
+    : DEFAULTS[editing.value.code]
+  if (!snap) return
+  editing.value.title = snap.title
+  editing.value.content = snap.content
   liveRender()
+  ElMessage.info('已填入默认文案（点「保存模板」生效）')
 }
 
 function openCreate() {

@@ -51,6 +51,8 @@ def template_to_dict(t: Optional[PushTemplate]) -> dict:
         "weekday": t.weekday,
         "title": t.title,
         "content": t.content,
+        "default_title": t.default_title,
+        "default_content": t.default_content,
         "variables": [v for v in (t.variables or "").split(",") if v],
         "enabled": bool(t.enabled),
         "updated_by": t.updated_by,

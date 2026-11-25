@@ -3,7 +3,6 @@
 到点（15 分钟窗口）且未发过才真正发 —— 后台改时间/启停即时生效，无需重启服务。
 """
 import logging
-from collections import Counter
 from datetime import datetime, timedelta
 
 from app.tasks.celery_app import celery_app
@@ -79,33 +78,21 @@ def push_daily_subscriptions():
         if not tpl:
             return {"pushed": False, "reason": "not_due_or_disabled"}
 
-        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        since = today_start - timedelta(days=1)
+        # 口径（2026-11-26 用户指定格式）：近 24 小时新增 → 「今日新增X条标讯 + 最新3条带链接」
+        since = datetime.now() - timedelta(hours=24)
         rows = (
             db.query(BidInfo)
-            .filter(BidInfo.status == 1, BidInfo.created_at >= since,
-                    BidInfo.created_at < today_start)
+            .filter(BidInfo.status == 1, BidInfo.created_at >= since)
+            .order_by(BidInfo.publish_time.desc())
             .all()
         )
-        # Top 关键词：标讯标题按 2-4 字中文词粗略统计（取高频名词近似）
-        titles = " ".join((r.title or "") for r in rows)
-        # 用常见招投标关键词表做命中统计，避免分词依赖
-        seed_kw = ["招标", "中标", "采购", "询价", "磋商", "竞价", "工程", "服务",
-                   "货物", "监理", "设计", "施工", "运维", "物业", "信息化", "设备"]
-        cnt = Counter({k: titles.count(k) for k in seed_kw if titles.count(k) > 0})
-        top_keywords = [f"{k}（{v}）" for k, v in cnt.most_common(10)] or ["（无）"]
-        regions = Counter((r.region_code or "未知") for r in rows)
-        top_regions = [f"{k}（{v}）" for k, v in regions.most_common(6)] if regions else []
-
         bid_list = "\n".join(
-            f"- [{(r.title or '')[:40]}]({r.source_url or ''})" for r in rows[:15]
+            f"- [{(r.title or '')[:60]}]({r.source_url or ''})" for r in rows[:3]
         ) or "（无）"
 
         return _send(db, code="daily_summary", variables={
-            "date": today_start.strftime("%Y-%m-%d"),
+            "date": datetime.now().strftime("%Y-%m-%d"),
             "count": str(len(rows)),
-            "top_keywords": "\n".join(f"> - {k}" for k in top_keywords),
-            "top_regions": "\n".join(f"> - {r}" for r in top_regions) if top_regions else "",
             "bid_list": bid_list,
         })
     except Exception as e:
