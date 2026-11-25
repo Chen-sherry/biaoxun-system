@@ -433,6 +433,201 @@ def backfill_notice_type(limit: int = 0) -> int:
         conn.close()
 
 
+# =====================================================
+# 正文字段提取（2026-11-26 下沉为公共函数）
+# 原实现只在 scripts/fetch_missing_content.py 里，爬虫入库不调用，
+# 导致新入库标讯 deadline/项目编号等字段为空就被推送 —— 现爬虫与补抓脚本共用本组函数
+# =====================================================
+
+# 编号值：字母/数字/括号/连字符等，可带「号」尾；不含中文，避免吞掉「二、项目名称」
+_CODE_VAL = r"([\[\(（]?[A-Za-z0-9][A-Za-z0-9\-_（）()\[\]\.\/]{1,44}号?)"
+_PROJECT_CODE_RES = [
+    re.compile(r"项目编号\s*[：:]?\s*" + _CODE_VAL),
+    re.compile(r"采购项目编号\s*[：:]?\s*" + _CODE_VAL),
+    re.compile(r"标段编号\s*[：:]?\s*" + _CODE_VAL),
+    re.compile(r"招标编号\s*[：:]?\s*" + _CODE_VAL),
+    re.compile(r"项目编号为\s*" + _CODE_VAL),
+]
+# 值里必须含数字或字母，排除「项目编号：见附件」这类纯中文
+_HAS_ALNUM = re.compile(r"[A-Za-z0-9]")
+
+# 截止时间：标签 + 中文日期 / ISO 日期
+# 按优先级排列：具体标签在前，通用标签在后（列表顺序 = 优先级，与文本位置无关）
+_DEADLINE_LABELS = (
+    "投标截止时间", "投标截止日期", "投标文件递交截止时间", "递交投标文件截止时间",
+    "提交投标文件截止时间", "投标文件提交截止时间", "响应文件递交截止时间",
+    "响应文件提交截止时间", "响应文件递交截止", "递交响应文件截止时间",
+    "磋商截止时间", "报价截止时间", "报价截止日期", "报价截止",
+    "递交截止时间", "提交截止时间", "递交截止", "提交截止",
+    "截止时间", "截止日期", "开标时间", "开启时间",
+)
+# 出现在标签前面时说明是「文件售卖/获取」截止，不是投标截止，必须跳过
+_DEADLINE_EXCLUDE = ("售卖", "获取", "发售", "下载", "购买", "报名", "注册")
+# 中文日期：支持 2025年7月4日 9:5 / 2025年7月4日9时5分 / 2025年7月4日9时5分30秒
+_CN_DATE = (r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*"
+            r"(?:\d{1,2}\s*[:：时]\s*\d{1,2}(?:\s*[:：分]\s*\d{1,2})?(?:\s*秒)?)?)")
+# ISO 日期：2025-07-08 15:00:00 / 2025/7/8 15:00
+_ISO_DATE = r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*\d{1,2}[:：]\d{2}(?::\d{2})?)"
+# 截止标签后多少字符内出现日期才算数（太大会把空表单字段后面无关日期误取）
+_DEADLINE_WINDOW = 80
+
+_REGION_RES = [
+    re.compile(r"行政区域[：:]\s*([一-龥]{2,10}?(?:省|市|自治区|特别行政区))"),
+    re.compile(r"项目所在地[：:]\s*([一-龥]{2,10}?(?:省|市|自治区))"),
+    re.compile(r"采购单位地址[：:]\s*(?:[一-龥]{2,6}省|)?([一-龥]{2,6}市)"),
+]
+
+# 单位（招标人/采购人）：标签后取到行尾/分隔符
+_TENDEREE_RES = [
+    re.compile(r"(?:招标人|招标单位|采购人|采购单位|项目业主|发包人|需求单位)"
+               r"\s*[：:]\s*([^\n\r，,；;。]{2,60})"),
+    re.compile(r"(?:招标人|采购人)[：:]\s*([^\n\r，,；;。]{2,60})"),
+]
+
+# 预算金额：数值 + 单位（万元/元），排除「中标金额/成交金额」（那是结果不是预算）
+_BUDGET_RES = [
+    re.compile(r"(?:预算金额|项目预算|采购预算|预算|总投资|项目金额)"
+               r"\s*[：:为约]?\s*([\d,]+(?:\.\d+)?)\s*(万元|亿元|元)"),
+    re.compile(r"预算金额\s*[：:为约]?\s*([\d,]+(?:\.\d+)?)\s*(万元|亿元|元)"),
+]
+_BUDGET_NEG = ("中标", "成交", "结算", "决算")  # 这些词出现在标签前则不是预算
+
+
+def extract_project_code(text: str) -> Optional[str]:
+    for rx in _PROJECT_CODE_RES:
+        m = rx.search(text)
+        if not m:
+            continue
+        v = m.group(1).strip().rstrip("。；;，,、")
+        if len(v) >= 5 and _HAS_ALNUM.search(v):
+            return v
+    return None
+
+
+def _parse_cn_date(s: str) -> Optional[datetime]:
+    """兼容 中文日期（2025年7月4日 9:5 / 9时5分30秒）与 ISO（2025-07-08 15:00:00）"""
+    s = re.sub(r"\s+", " ", s).strip()
+    s = (s.replace("年", "-").replace("月", "-").replace("日", " ")
+           .replace("时", ":").replace("分", ":").replace("秒", "")
+           .replace("：", ":").replace("/", "-"))
+    s = re.sub(r"\s+", " ", s).strip().rstrip(":").strip()
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})"
+                 r"(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$", s)
+    if not m:
+        return None
+    y, mo, d, h, mi, se = m.groups()
+    try:
+        return datetime(int(y), int(mo), int(d),
+                        int(h or 0), int(mi or 0), int(se or 0))
+    except ValueError:
+        return None
+
+
+def extract_deadline(text: str) -> Optional[datetime]:
+    """按标签优先级找投标截止时间。
+    同一标签可能多次出现，逐个尝试；标签前文含「售卖/获取/发售…」时跳过（那是文件获取截止）。
+    """
+    for label in _DEADLINE_LABELS:
+        start = 0
+        while True:
+            idx = text.find(label, start)
+            if idx < 0:
+                break
+            start = idx + 1
+            pre = text[max(0, idx - 14): idx]
+            if any(x in pre for x in _DEADLINE_EXCLUDE):
+                continue
+            window = text[idx: idx + _DEADLINE_WINDOW]
+            for rx in (_CN_DATE, _ISO_DATE):
+                m = re.search(rx, window)
+                if m:
+                    dt = _parse_cn_date(m.group(1))
+                    if dt and 2020 <= dt.year <= 2035:
+                        return dt
+    return None
+
+
+def extract_region_name(text: str) -> Optional[str]:
+    for rx in _REGION_RES:
+        m = rx.search(text)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def extract_tenderee(text: str) -> Optional[str]:
+    """从正文提取招标人/采购人（仅用于补空字段）"""
+    for rx in _TENDEREE_RES:
+        m = rx.search(text)
+        if m:
+            v = m.group(1).strip().strip("：:　 ")
+            # 去掉明显不是单位名的尾部（正则已限长度）
+            if 2 <= len(v) <= 60:
+                return v
+    return None
+
+
+def extract_budget(text: str) -> Optional[str]:
+    """从正文提取预算金额，返回带单位的原串（如 350.00 万元）；仅用于补空字段"""
+    for rx in _BUDGET_RES:
+        for m in rx.finditer(text):
+            # 标签前 8 字内出现 中标/成交 等词 → 是结果金额，跳过
+            idx = m.start()
+            pre = text[max(0, idx - 8): idx]
+            if any(x in pre for x in _BUDGET_NEG):
+                continue
+            num = m.group(1).replace(",", "")
+            unit = m.group(2)
+            try:
+                val = float(num)
+            except ValueError:
+                continue
+            if val <= 0:
+                continue
+            # 亿元统一折成「万元」口径保留原单位即可，直接回原串
+            return f"{m.group(1)} {unit}"
+    return None
+
+
+def extract_fields_from_text(title: str, text: str, conn=None,
+                             current: Optional[dict] = None) -> dict:
+    """从正文一次性提取所有可补字段，只返回**当前为空**的字段新值。
+    current: {"deadline","project_code","region_code","tenderee","budget"} 现值（缺省视为全空）
+    爬虫入库与补抓脚本共用；conn 供地区字典查询（可空，空则不提地区）。
+    """
+    cur = current or {}
+    flat = re.sub(r"\s+", " ", text or "")
+    out: dict = {}
+
+    if cur.get("deadline") is None:
+        dl = extract_deadline(flat)
+        if dl:
+            out["deadline"] = dl
+    if not cur.get("project_code"):
+        pc = extract_project_code(flat)
+        if pc:
+            out["project_code"] = pc
+    if not cur.get("tenderee"):
+        td = extract_tenderee(flat)
+        if td:
+            out["tenderee"] = td
+    if not cur.get("budget"):
+        bg = extract_budget(flat)
+        if bg:
+            out["budget"] = bg
+    if (not cur.get("region_code") or cur.get("region_code") == "-1") and conn is not None:
+        try:
+            nname = extract_region_name(flat)
+            if nname:
+                cur.execute("SELECT code FROM dict_region WHERE name=%s LIMIT 1", (nname,))
+                row = cur.fetchone()
+                if row:
+                    out["region_code"] = row[0]
+        except Exception:
+            logger.debug("extract region failed", exc_info=True)
+    return out
+
+
 if __name__ == "__main__":
     import sys
     dry_run = "--dry-run" in sys.argv

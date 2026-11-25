@@ -233,19 +233,22 @@ def already_pushed(db, template_id: int, since: datetime) -> bool:
 # ============================================================
 
 def count_recent(hours: int = 24) -> int:
-    """近 N 小时新增标讯数（每日推送的 {count}）"""
+    """近 N 小时新增标讯数（每日推送的 {count}）——只统计已清洗提取的"""
     from app.models.bid import BidInfo
     db = SessionLocal()
     try:
         since = datetime.now() - timedelta(hours=hours)
         return db.query(BidInfo.id).filter(
-            BidInfo.status == 1, BidInfo.created_at >= since).count()
+            BidInfo.status == 1, BidInfo.created_at >= since,
+            BidInfo.notice_type_id.isnot(None)).count()  # 未提取的不发
     finally:
         db.close()
 
 
 def build_latest_bids_list(db, limit: int = 3) -> str:
-    """最新 N 条标讯的结构化 markdown（任务与预览共用同一实现）"""
+    """最新 N 条标讯的结构化 markdown（任务与预览共用同一实现）。
+    过滤未清洗/未提取的条目（notice_type_id 为空 = 提取流程未跑过）。
+    """
     from app.models.bid import BidInfo
     from app.models.dict import DictNoticeType
 
@@ -253,7 +256,8 @@ def build_latest_bids_list(db, limit: int = 3) -> str:
     rows = (
         db.query(BidInfo, DictNoticeType.name.label("nt_name"))
         .join(DictNoticeType, DictNoticeType.id == BidInfo.notice_type_id, isouter=True)
-        .filter(BidInfo.status == 1, BidInfo.created_at >= since)
+        .filter(BidInfo.status == 1, BidInfo.created_at >= since,
+                BidInfo.notice_type_id.isnot(None))  # 未提取的不发
         .order_by(BidInfo.publish_time.desc())
         .limit(limit)
         .all()

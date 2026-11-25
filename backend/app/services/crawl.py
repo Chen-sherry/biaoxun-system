@@ -647,6 +647,21 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                             wa = det.get("win_amount")
                             if wa is not None and row.win_amount is None:
                                 row.win_amount = wa
+                            # 补正文后立即提取（同 data_clean 公共函数，只补空字段）
+                            if row.content_text:
+                                try:
+                                    from app.services.data_clean import extract_fields_from_text
+                                    extra = extract_fields_from_text(
+                                        row.title or "", row.content_text, conn=conn.cursor(),
+                                        current={"deadline": row.deadline,
+                                                 "project_code": row.project_code,
+                                                 "region_code": row.region_code,
+                                                 "tenderee": row.tenderee,
+                                                 "budget": row.budget})
+                                    for k, v in extra.items():
+                                        setattr(row, k, v)
+                                except Exception:
+                                    logger.warning("补正文后提取失败 id=%s", row.id, exc_info=True)
                             stats["updated"] += 1
                 stats["skipped"] += 1
                 return
@@ -661,6 +676,24 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
             if mapped["dedup_key"] in existing:
                 stats["skipped"] += 1
                 return
+
+            # 入库即提取（2026-11-26）：正文中的截止时间/项目编号/单位/金额/地区
+            # 提取函数与补抓脚本共用 data_clean 同一实现；只补空字段，不覆盖已有值
+            if mapped.get("content_text"):
+                try:
+                    from app.services.data_clean import extract_fields_from_text
+                    extra = extract_fields_from_text(
+                        mapped.get("title") or "", mapped["content_text"],
+                        conn=conn.cursor(),
+                        current={"deadline": mapped.get("deadline"),
+                                 "project_code": mapped.get("project_code"),
+                                 "region_code": mapped.get("region_code"),
+                                 "tenderee": mapped.get("tenderee"),
+                                 "budget": mapped.get("budget")})
+                    mapped.update(extra)
+                except Exception:
+                    logger.warning("入库即提取失败 title=%s", str(mapped.get("title"))[:40], exc_info=True)
+
             db.add(BidInfo(**mapped))
             existing[mapped["dedup_key"]] = mapped.get("content_text")
             stats["saved"] += 1
