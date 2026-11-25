@@ -113,6 +113,12 @@ export function fetchPushTemplates() {
 export function savePushTemplate(code: string, data: Record<string, any>) {
   return request.put(`/api/v1/admin/push/templates/${code}`, data)
 }
+export function createPushTemplate(data: Record<string, any>) {
+  return request.post('/api/v1/admin/push/templates', data)
+}
+export function deletePushTemplate(code: string) {
+  return request.delete(`/api/v1/admin/push/templates/${code}`)
+}
 export function previewPushTemplate(code: string, data?: Record<string, any>) {
   return request.post(`/api/v1/admin/push/templates/${code}/preview`, data || {})
 }

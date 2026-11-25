@@ -28,17 +28,24 @@ celery_app.conf.update(
             "task": "app.tasks.crawl_tasks.crawl_all_sources",
             "schedule": 3600,  # 1 小时
         },
-        "push-daily-8am": {
+        # 以下三个每日任务改为每 5 分钟自检：执行时间存 push_template.schedule_time，
+        # 后台改时间/启停即时生效，无需重启 beat（任务内部 due_window 判定 + 防重）
+        "push-daily-check": {
             "task": "app.tasks.push_tasks.push_daily_subscriptions",
-            "schedule": crontab(minute=0, hour=8),  # 每天 8:00
+            "schedule": crontab(minute="*/5"),
         },
-        "expiry-summary-9am": {
+        "expiry-summary-check": {
             "task": "app.tasks.push_tasks.send_expiring_bid_daily",
-            "schedule": crontab(minute=0, hour=9),  # 每天 9:00
+            "schedule": crontab(minute="*/5"),
         },
-        "archive-expired-bids": {
+        "archive-expired-bids-check": {
             "task": "app.tasks.bid_tasks.archive_expired_bids",
-            "schedule": crontab(minute=0, hour=2),  # 每天 2:00
+            "schedule": crontab(minute="*/5"),
+        },
+        # 自定义定时推送（后台「新增定时推送」创建的 kind=custom 模板）
+        "push-custom-templates-check": {
+            "task": "app.tasks.push_tasks.push_custom_templates",
+            "schedule": crontab(minute="*/5"),
         },
     },
 )

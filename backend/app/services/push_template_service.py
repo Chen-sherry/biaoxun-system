@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from app.database import SessionLocal
@@ -43,6 +43,12 @@ def template_to_dict(t: Optional[PushTemplate]) -> dict:
     return {
         "id": t.id,
         "code": t.code,
+        "name": t.name or "",
+        "kind": t.kind or "fixed",
+        "schedule_time": t.schedule_time or DEFAULT_SCHEDULE.get(t.code, ""),
+        "schedule_is_default": not (t.schedule_time or "").strip(),
+        "frequency": t.frequency or "daily",
+        "weekday": t.weekday,
         "title": t.title,
         "content": t.content,
         "variables": [v for v in (t.variables or "").split(",") if v],
@@ -167,3 +173,53 @@ def record_to_dict(r: PushRecord, operator_name: Optional[str] = None,
         "error_msg": r.error_msg,
         "push_time": r.push_time.isoformat() if r.push_time else None,
     }
+
+
+# ============================================================
+# 执行时间（M5）：任务每 5 分钟自检，到点才真正发
+# ============================================================
+
+# 内置任务的默认执行时间（表里 schedule_time 为空时兜底）
+DEFAULT_SCHEDULE = {
+    "daily_summary": "08:00",
+    "expiring_alert": "09:00",
+    "archive_notice": "02:00",
+}
+# 到点判定窗口（分钟）：beat 每 5 分钟触发一次，窗口内任一次命中即执行一次
+DUE_WINDOW_MINUTES = 15
+
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def is_valid_time(v: str) -> bool:
+    return bool(_TIME_RE.match(v or ""))
+
+
+def due_window(db, tpl: PushTemplate, now: Optional[datetime] = None) -> Optional[datetime]:
+    """判断模板是否处于「应执行窗口」，是则返回窗口起点 target，否则 None。
+    - schedule_time 为空 → 用内置默认（custom 无默认 → None 不执行）
+    - weekly 模板仅在匹配 weekday 的那天执行
+    - 窗口 = [target, target + DUE_WINDOW_MINUTES)
+    """
+    now = now or datetime.now()
+    hhmm = (tpl.schedule_time or "").strip() or DEFAULT_SCHEDULE.get(tpl.code)
+    if not hhmm or not is_valid_time(hhmm):
+        return None
+    h, m = int(hhmm[:2]), int(hhmm[3:5])
+    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if tpl.kind == "custom" and tpl.frequency == "weekly":
+        if tpl.weekday is None or now.weekday() != int(tpl.weekday):
+            return None
+    if target <= now < target + timedelta(minutes=DUE_WINDOW_MINUTES):
+        return target
+    return None
+
+
+def already_pushed(db, template_id: int, since: datetime) -> bool:
+    """防重复：窗口起点之后该模板已有真实发送记录（成功或失败都算）→ 跳过。
+    也顺带实现「失败不重试轰炸」——失败记录落库即止，人工用测试发送补救。"""
+    return db.query(PushRecord.id).filter(
+        PushRecord.template_id == template_id,
+        PushRecord.preview == 0,
+        PushRecord.push_time >= since,
+    ).first() is not None

@@ -43,9 +43,24 @@ class TemplateIn(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     enabled: Optional[bool] = None
+    name: Optional[str] = None
+    schedule_time: Optional[str] = None   # HH:MM（M5 执行时间调整）
+    frequency: Optional[str] = None       # daily / weekly（custom）
+    weekday: Optional[int] = None         # 0=周一..6=周日
 
 
-@router.put("/templates/{code}", summary="保存模板（S4：变量校验）")
+class TemplateCreateIn(BaseModel):
+    code: str                 # 自定义编码（唯一，如 custom_xxx）
+    name: str
+    schedule_time: str        # HH:MM
+    title: str
+    content: str
+    frequency: str = "daily"
+    weekday: Optional[int] = None
+    enabled: bool = True
+
+
+@router.put("/templates/{code}", summary="保存模板（S4：变量校验 + M5 执行时间）")
 def save_template(code: str, payload: TemplateIn, db: Session = Depends(get_db),
                   user: SysUser = Depends(get_current_user)):
     if not user.is_admin and "ops" not in {r.code for r in user.roles}:
@@ -66,11 +81,84 @@ def save_template(code: str, payload: TemplateIn, db: Session = Depends(get_db),
         t.title = payload.title
     if payload.enabled is not None:
         t.enabled = 1 if payload.enabled else 0
+    if payload.name is not None:
+        t.name = payload.name[:64]
+    if payload.schedule_time is not None:
+        if not pts.is_valid_time(payload.schedule_time):
+            raise HTTPException(status_code=400, detail="执行时间格式须为 HH:MM（00:00~23:59）")
+        t.schedule_time = payload.schedule_time
+    if payload.frequency is not None:
+        if payload.frequency not in ("daily", "weekly"):
+            raise HTTPException(status_code=400, detail="频率仅支持 daily / weekly")
+        t.frequency = payload.frequency
+    if payload.weekday is not None:
+        if not 0 <= payload.weekday <= 6:
+            raise HTTPException(status_code=400, detail="weekday 取值 0~6（周一~周日）")
+        t.weekday = payload.weekday
     t.updated_by = user.id
     from datetime import datetime
     t.updated_at = datetime.now()
     db.commit()
-    return ApiResponse.ok(pts.template_to_dict(t), msg="模板已保存")
+    return ApiResponse.ok(pts.template_to_dict(t), msg="模板已保存（执行时间即时生效）")
+
+
+@router.post("/templates", summary="新增自定义定时推送（kind=custom）")
+def create_template(payload: TemplateCreateIn, db: Session = Depends(get_db),
+                    user: SysUser = Depends(get_current_user)):
+    if not user.is_admin and "ops" not in {r.code for r in user.roles}:
+        raise HTTPException(status_code=403, detail="权限不足")
+    import re as _re
+    code = (payload.code or "").strip()
+    if not _re.match(r"^[a-z][a-z0-9_]{2,31}$", code):
+        raise HTTPException(status_code=400, detail="code 须为小写字母开头的 3~32 位字母数字下划线")
+    if pts.get_template(db, code):
+        raise HTTPException(status_code=400, detail=f"code 已存在：{code}")
+    if not pts.is_valid_time(payload.schedule_time):
+        raise HTTPException(status_code=400, detail="执行时间格式须为 HH:MM（00:00~23:59）")
+    if payload.frequency not in ("daily", "weekly"):
+        raise HTTPException(status_code=400, detail="频率仅支持 daily / weekly")
+    if payload.frequency == "weekly" and payload.weekday is None:
+        raise HTTPException(status_code=400, detail="每周执行需选择星期几")
+    # 自定义模板可用变量固定为 date/count
+    bad = pts.validate_variables(payload.content, ["date", "count"]) + \
+          pts.validate_variables(payload.title, ["date", "count"])
+    if bad:
+        raise HTTPException(status_code=400,
+                            detail=f"自定义模板仅支持变量 {{date}} {{count}}，发现：{', '.join(sorted(set(bad)))}")
+    if not payload.title.strip() or not payload.content.strip():
+        raise HTTPException(status_code=400, detail="标题和内容不能为空")
+
+    t = PushTemplate(
+        code=code, name=payload.name[:64], kind="custom",
+        schedule_time=payload.schedule_time, frequency=payload.frequency,
+        weekday=payload.weekday if payload.frequency == "weekly" else None,
+        title=payload.title, content=payload.content,
+        variables="date,count", enabled=1 if payload.enabled else 0,
+        updated_by=user.id,
+    )
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return ApiResponse.ok(pts.template_to_dict(t), msg="自定义定时推送已创建")
+
+
+@router.delete("/templates/{code}", summary="删除自定义定时推送（内置模板不可删）")
+def delete_template(code: str, db: Session = Depends(get_db),
+                    user: SysUser = Depends(get_current_user)):
+    if not user.is_admin and "ops" not in {r.code for r in user.roles}:
+        raise HTTPException(status_code=403, detail="权限不足")
+    t = pts.get_template(db, code)
+    if not t:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    if t.kind != "custom":
+        raise HTTPException(status_code=400, detail="内置模板不可删除，只能停用")
+    # 清掉关联记录的外键引用风险：push_record.template_id 是 FK，先置空
+    from app.models.push import PushRecord
+    db.query(PushRecord).filter(PushRecord.template_id == t.id).update(
+        {PushRecord.template_id: None})
+    db.delete(t)
+    db.commit()
+    return ApiResponse.ok(msg="已删除")
 
 
 class RenderIn(BaseModel):

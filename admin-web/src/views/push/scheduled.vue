@@ -7,19 +7,46 @@
       description="服务器 backend/.env 中 WECOM_WEBHOOK 为空，测试发送与定时推送都不会真正发出。"
     />
 
-    <!-- 三张模板卡片 -->
+    <div class="toolbar">
+      <span class="hint">执行时间改动即时生效（每 5 分钟自检，无需重启服务）</span>
+      <el-button type="primary" @click="openCreate">＋ 新增定时推送</el-button>
+    </div>
+
+    <!-- 模板卡片 -->
     <div class="cards">
       <el-card v-for="tpl in templates" :key="tpl.code" class="tpl-card" shadow="hover">
         <div class="card-head">
           <div>
-            <div class="tpl-name">{{ meta[tpl.code]?.name || tpl.code }}</div>
-            <div class="tpl-schedule">{{ meta[tpl.code]?.schedule }}</div>
+            <div class="tpl-name">
+              {{ tpl.name || tpl.code }}
+              <el-tag size="small" :type="tpl.kind === 'custom' ? 'warning' : 'info'" effect="plain">
+                {{ tpl.kind === 'custom' ? '自定义' : '内置' }}
+              </el-tag>
+            </div>
+            <div class="tpl-schedule">
+              <template v-if="tpl.kind === 'custom' && tpl.frequency === 'weekly'">
+                每周{{ WEEK_CN[tpl.weekday ?? 0] }}
+              </template>
+              <template v-else>每天</template>
+            </div>
           </div>
           <el-switch
             :model-value="tpl.enabled"
             active-text="启用" inactive-text="停用"
             @change="(v: any) => toggleEnabled(tpl, v)"
           />
+        </div>
+
+        <!-- 执行时间（可改，改动即保存） -->
+        <div class="time-row">
+          <el-time-picker
+            v-model="tpl.schedule_time"
+            format="HH:mm" value-format="HH:mm"
+            placeholder="执行时间" style="width: 110px"
+            @change="(v: string | null) => saveTime(tpl, v)"
+          />
+          <span class="time-label">执行</span>
+          <span v-if="tpl.schedule_is_default" class="default-tag">默认时间</span>
         </div>
 
         <div class="tpl-title-preview">## {{ tpl.title }}</div>
@@ -37,19 +64,47 @@
           <el-button type="primary" @click="openEditor(tpl)">编辑模板</el-button>
           <el-button @click="doPreview(tpl.code)" :loading="previewing === tpl.code">真实数据预览</el-button>
           <el-button @click="doTest(tpl.code)" :loading="testing === tpl.code" type="warning" plain>测试发送</el-button>
+          <el-button
+            v-if="tpl.kind === 'custom'"
+            type="danger" link @click="onDelete(tpl)"
+          >删除</el-button>
         </div>
       </el-card>
     </div>
 
     <!-- 编辑抽屉 -->
-    <el-drawer v-model="drawer" :title="`编辑模板：${meta[editing?.code || '']?.name || ''}`" size="720px">
+    <el-drawer v-model="drawer" :title="`编辑模板：${editing?.name || editing?.code || ''}`" size="720px">
       <template v-if="editing">
         <el-form label-position="top">
+          <div class="edit-meta">
+            <el-form-item label="显示名" class="half">
+              <el-input v-model="editing.name" />
+            </el-form-item>
+            <el-form-item label="执行时间" class="half">
+              <el-time-picker v-model="editing.schedule_time" format="HH:mm" value-format="HH:mm"
+                placeholder="执行时间" style="width: 100%" />
+            </el-form-item>
+            <el-form-item v-if="editing.kind === 'custom'" label="频率" class="half">
+              <el-select v-model="editing.frequency" style="width: 100%">
+                <el-option value="daily" label="每天" />
+                <el-option value="weekly" label="每周" />
+              </el-select>
+            </el-form-item>
+            <el-form-item
+              v-if="editing.kind === 'custom' && editing.frequency === 'weekly'"
+              label="星期" class="half"
+            >
+              <el-select v-model="editing.weekday" style="width: 100%">
+                <el-option v-for="(cn, i) in WEEK_CN" :key="i" :value="i" :label="'每' + cn" />
+              </el-select>
+            </el-form-item>
+          </div>
+
           <el-form-item label="消息标题（发送时自动加 ## 前缀）">
             <el-input v-model="editing.title" placeholder="标题" />
           </el-form-item>
 
-          <el-form-item label="正文模板（{变量} 会被真实数据替换）">
+          <el-form-item :label="editing.kind === 'custom' ? '正文模板（可用变量 {date} {count}）' : '正文模板（{变量} 会被真实数据替换）'">
             <div class="vars">
               <el-button
                 v-for="v in editing.variables" :key="v"
@@ -64,7 +119,7 @@
           </el-form-item>
 
           <div class="drawer-actions">
-            <el-button @click="resetDefault">恢复默认文案</el-button>
+            <el-button v-if="editing.kind !== 'custom'" @click="resetDefault">恢复默认文案</el-button>
             <el-button @click="liveRender" :loading="previewing === editing.code">用真实数据预览</el-button>
             <el-button type="warning" plain @click="doTest(editing.code, true)" :loading="testing === editing.code">测试发送</el-button>
             <el-button type="primary" @click="doSave" :loading="saving">保存模板</el-button>
@@ -89,6 +144,48 @@
         </div>
       </template>
     </el-drawer>
+
+    <!-- 新增定时推送 -->
+    <el-dialog v-model="createDlg" title="新增定时推送" width="560px" destroy-on-close>
+      <el-form label-width="90px" :model="createForm">
+        <el-form-item label="编码 code" required>
+          <el-input v-model="createForm.code" placeholder="小写字母开头，如 weekly_report" />
+        </el-form-item>
+        <el-form-item label="显示名" required>
+          <el-input v-model="createForm.name" placeholder="如：每周汇总" />
+        </el-form-item>
+        <el-form-item label="执行时间" required>
+          <el-time-picker v-model="createForm.schedule_time" format="HH:mm" value-format="HH:mm"
+            placeholder="每天几点发" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="频率">
+          <el-select v-model="createForm.frequency" style="width: 140px">
+            <el-option value="daily" label="每天" />
+            <el-option value="weekly" label="每周" />
+          </el-select>
+          <el-select
+            v-if="createForm.frequency === 'weekly'"
+            v-model="createForm.weekday" style="width: 140px; margin-left: 8px"
+          >
+            <el-option v-for="(cn, i) in WEEK_CN" :key="i" :value="i" :label="'每' + cn" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="消息标题" required>
+          <el-input v-model="createForm.title" placeholder="如：本周标讯汇总" />
+        </el-form-item>
+        <el-form-item label="正文" required>
+          <el-input v-model="createForm.content" type="textarea" :rows="7"
+            placeholder="支持变量 {date}（当天日期）、{count}（近24小时新增标讯数）" />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="createForm.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDlg = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="doCreate">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -96,18 +193,20 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  fetchPushTemplates, savePushTemplate, previewPushTemplate, testPushTemplate,
-  fetchPushRecords, fetchPushChannels,
+  fetchPushTemplates, savePushTemplate, createPushTemplate, deletePushTemplate,
+  previewPushTemplate, testPushTemplate, fetchPushRecords, fetchPushChannels,
 } from '@/api'
 import { mdLite } from '@/utils/mdLite'
 
-// 模板元信息（与 Celery 任务时间对应）
-const meta: Record<string, { name: string; schedule: string }> = {
-  daily_summary: { name: '每日推送', schedule: '每天 08:00 · 新增标讯汇总' },
-  expiring_alert: { name: '到期预警', schedule: '每天 09:00 · 24h 内截止标讯' },
-  archive_notice: { name: '归档通知', schedule: '每天 02:00 · 归档汇总' },
+const WEEK_CN = ['一', '二', '三', '四', '五', '六', '日']
+
+// 内置任务说明（仅用于兜底显示，实际时间以库里为准）
+const meta: Record<string, { name: string }> = {
+  daily_summary: { name: '每日推送' },
+  expiring_alert: { name: '到期预警' },
+  archive_notice: { name: '归档通知' },
 }
-// 默认文案（与 SQL 种子一致）
+// 内置默认文案（恢复默认用）
 const DEFAULTS: Record<string, { title: string; content: string }> = {
   daily_summary: {
     title: '📢 {date} 新增标讯汇总',
@@ -134,8 +233,14 @@ const testing = ref('')
 const previewHtml = ref('')
 const lengthInfo = ref<any>(null)
 const contentRef = ref()
-// 缓存最近一次真实预览的变量，编辑时本地实时重渲染（不重复落库）
 const cachedVars = ref<Record<string, string>>({})
+
+const createDlg = ref(false)
+const creating = ref(false)
+const createForm = reactive({
+  code: '', name: '', schedule_time: '', frequency: 'daily',
+  weekday: 0, title: '', content: '', enabled: true,
+})
 
 function truncate(s: string, n: number) { return (s || '').length > n ? s.slice(0, n) + '…' : s }
 function fmtTime(t?: string) { return t ? t.replace('T', ' ').slice(0, 16) : '' }
@@ -145,7 +250,6 @@ async function load() {
   const [tpls, chans] = await Promise.all([fetchPushTemplates(), fetchPushChannels()])
   templates.value = tpls || []
   channels.value = chans
-  // 最近执行记录（按模板 code 分组取最新）
   try {
     const rec = await fetchPushRecords({ page: 1, page_size: 100 })
     for (const r of rec.items || []) {
@@ -160,6 +264,13 @@ async function toggleEnabled(tpl: any, val: any) {
   ElMessage.success(tpl.enabled ? '已启用，到点将正常推送' : '已停用，到点将跳过不发')
 }
 
+async function saveTime(tpl: any, v: string | null) {
+  if (!v) return
+  await savePushTemplate(tpl.code, { schedule_time: v })
+  tpl.schedule_is_default = false
+  ElMessage.success(`执行时间已改为每天 ${v}，即时生效`)
+}
+
 function openEditor(tpl: any) {
   editing.value = { ...tpl, variables: tpl.variables || [] }
   previewHtml.value = ''
@@ -170,7 +281,7 @@ function openEditor(tpl: any) {
 
 function insertVar(v: string) {
   const el = contentRef.value?.textarea || contentRef.value?.$el?.querySelector('textarea')
-  const token = `{${v}}`
+  const token = varLabel(v)
   const pos = el?.selectionStart ?? editing.value.content.length
   const c = editing.value.content
   editing.value.content = c.slice(0, pos) + token + c.slice(pos)
@@ -178,7 +289,6 @@ function insertVar(v: string) {
 }
 
 function localRender(src: string): string {
-  // 用缓存的真实变量本地替换（打字实时反馈）
   return (src || '').replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (m, k) =>
     cachedVars.value[k] !== undefined ? cachedVars.value[k] : m,
   )
@@ -188,8 +298,8 @@ function liveRender() {
   if (!editing.value) return
   const full = `## ${localRender(editing.value.title)}\n${localRender(editing.value.content)}`
   previewHtml.value = cachedVars.value.__loaded ? mdLite(full) : ''
-  lengthInfo.value = { bytes: new TextEncoder().encode(full).length, limit: 4096,
-    ok: new TextEncoder().encode(full).length <= 4096 }
+  const bytes = new TextEncoder().encode(full).length
+  lengthInfo.value = { bytes, limit: 4096, ok: bytes <= 4096 }
 }
 
 async function doPreview(code: string) {
@@ -206,7 +316,6 @@ async function doPreview(code: string) {
       previewHtml.value = mdLite(d.full)
       lengthInfo.value = d.length
     } else {
-      // 卡片上的预览：临时打开抽屉展示
       const tpl = templates.value.find(t => t.code === code)
       openEditor(tpl)
       await new Promise(r => setTimeout(r, 100))
@@ -229,7 +338,7 @@ async function doTest(code: string, fromDrawer = false) {
   await ElMessageBox.confirm(
     '将按当前模板内容 + 真实数据发送一条 [测试] 消息到企业微信群，确认发送？',
     '测试发送', { type: 'warning' },
-  )
+  ).catch(() => null)
   testing.value = code
   try {
     const r: any = await testPushTemplate(code, body)
@@ -245,9 +354,14 @@ async function doSave() {
   saving.value = true
   try {
     await savePushTemplate(editing.value.code, {
-      title: editing.value.title, content: editing.value.content,
+      name: editing.value.name,
+      title: editing.value.title,
+      content: editing.value.content,
+      schedule_time: editing.value.schedule_time,
+      frequency: editing.value.frequency,
+      weekday: editing.value.weekday,
     })
-    ElMessage.success('模板已保存，次日到点按新文案执行')
+    ElMessage.success('模板已保存，执行时间即时生效')
     drawer.value = false
     await load()
   } finally {
@@ -263,20 +377,58 @@ function resetDefault() {
   liveRender()
 }
 
+function openCreate() {
+  Object.assign(createForm, {
+    code: 'custom_' + Math.random().toString(36).slice(2, 8),
+    name: '', schedule_time: '09:30', frequency: 'daily',
+    weekday: 0, title: '', content: '', enabled: true,
+  })
+  createDlg.value = true
+}
+
+async function doCreate() {
+  creating.value = true
+  try {
+    const r: any = await createPushTemplate({ ...createForm })
+    ElMessage.success(r?.msg || '已创建')
+    createDlg.value = false
+    await load()
+  } finally {
+    creating.value = false
+  }
+}
+
+async function onDelete(tpl: any) {
+  await ElMessageBox.confirm(
+    `删除自定义定时推送「${tpl.name || tpl.code}」？历史推送记录会保留。`, '删除确认',
+    { type: 'warning' },
+  ).catch(() => null)
+  await deletePushTemplate(tpl.code)
+  ElMessage.success('已删除')
+  await load()
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
 .mb12 { margin-bottom: 12px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.hint { font-size: 12px; color: #909399; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
 .tpl-card :deep(.el-card__body) { display: flex; flex-direction: column; gap: 10px; }
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.tpl-name { font-size: 16px; font-weight: 600; }
+.tpl-name { font-size: 16px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .tpl-schedule { font-size: 12px; color: #909399; margin-top: 4px; }
+.time-row { display: flex; align-items: center; gap: 8px; }
+.time-label { font-size: 13px; color: #606266; }
+.default-tag { font-size: 11px; color: #c0c4cc; border: 1px dashed #dcdfe6; border-radius: 3px; padding: 1px 5px; }
 .tpl-title-preview { font-weight: 600; font-size: 14px; color: #303133; }
-.tpl-content-preview { font-size: 13px; color: #606266; line-height: 1.6; min-height: 60px; }
+.tpl-content-preview { font-size: 13px; color: #606266; line-height: 1.6; min-height: 48px; }
 .last-exec { font-size: 12px; color: #909399; display: flex; gap: 8px; align-items: center; }
 .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.edit-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.half { margin-bottom: 8px; }
 .vars { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 .drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .preview-box { margin-top: 8px; }

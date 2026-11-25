@@ -33,7 +33,15 @@ class PushTemplate(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(32), nullable=False, unique=True, index=True,
-                  comment="daily_summary/expiring_alert/archive_notice")
+                  comment="daily_summary/expiring_alert/archive_notice/自定义")
+    name = Column(String(64), nullable=False, default="", comment="显示名")
+    kind = Column(String(16), nullable=False, default="fixed",
+                  comment="fixed 内置任务 / custom 自定义定时推送")
+    schedule_time = Column(String(5), nullable=False, default="",
+                           comment="执行时间 HH:MM，空=内置默认")
+    frequency = Column(String(8), nullable=False, default="daily",
+                       comment="daily 每天 / weekly 每周（custom 用）")
+    weekday = Column(Integer, nullable=True, comment="weekly 时 0=周一..6=周日")
     title = Column(String(255), nullable=False, comment="消息标题（## 前缀由发送层加）")
     content = Column(Text, nullable=False, comment="模板正文，{var} 占位符")
     variables = Column(String(500), nullable=False, default="",

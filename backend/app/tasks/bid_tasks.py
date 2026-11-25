@@ -17,6 +17,12 @@ def archive_expired_bids():
 
     db = SessionLocal()
     try:
+        from app.tasks.push_tasks import _due_gate
+        tpl, target = _due_gate(db, "archive_notice")
+        if not tpl:
+            # 未到点/停用/已发过 → 整个跳过（归档动作也只在到点窗口内做，幂等且每日一次）
+            return {"archived": 0, "notified": False, "reason": "not_due_or_disabled"}
+
         cutoff = datetime.now() - timedelta(days=30)
         rows = (
             db.query(BidInfo)
