@@ -203,15 +203,11 @@ def _build_real_vars(db: Session, code: str) -> dict:
         return {"date": now.strftime("%Y-%m-%d"), "count": str(len(rows)),
                 "bid_list": bid_list}
 
-    # daily_summary：近 24 小时新增（最新 3 条带链接，与任务逻辑一致）
-    since = datetime.now() - timedelta(hours=24)
-    rows = (db.query(BidInfo)
-            .filter(BidInfo.status == 1, BidInfo.created_at >= since)
-            .order_by(BidInfo.publish_time.desc()).all())
-    bid_list = "\n".join(
-        f"- [{(r.title or '')[:60]}]({r.source_url or ''})" for r in rows[:3]) or "（无）"
-    return {"date": datetime.now().strftime("%Y-%m-%d"), "count": str(len(rows)),
-            "bid_list": bid_list}
+    # daily_summary：近 24h 新增 X 条 + 最新 3 条结构化卡片（与任务同一实现）
+    from app.services.push_template_service import count_recent, build_latest_bids_list
+    return {"date": datetime.now().strftime("%Y-%m-%d"),
+            "count": str(count_recent(24)),
+            "bid_list": build_latest_bids_list(db, limit=3)}
 
 
 @router.post("/templates/{code}/preview", summary="预览（真实数据渲染，不发送；Q6=落库 preview 记录）")

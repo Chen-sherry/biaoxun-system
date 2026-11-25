@@ -78,22 +78,12 @@ def push_daily_subscriptions():
         if not tpl:
             return {"pushed": False, "reason": "not_due_or_disabled"}
 
-        # 口径（2026-11-26 用户指定格式）：近 24 小时新增 → 「今日新增X条标讯 + 最新3条带链接」
-        since = datetime.now() - timedelta(hours=24)
-        rows = (
-            db.query(BidInfo)
-            .filter(BidInfo.status == 1, BidInfo.created_at >= since)
-            .order_by(BidInfo.publish_time.desc())
-            .all()
-        )
-        bid_list = "\n".join(
-            f"- [{(r.title or '')[:60]}]({r.source_url or ''})" for r in rows[:3]
-        ) or "（无）"
-
+        # 口径（2026-11-26 用户指定格式）：近 24h 新增 X 条 + 最新 3 条结构化卡片
+        from app.services.push_template_service import count_recent, build_latest_bids_list
         return _send(db, code="daily_summary", variables={
             "date": datetime.now().strftime("%Y-%m-%d"),
-            "count": str(len(rows)),
-            "bid_list": bid_list,
+            "count": str(count_recent(24)),
+            "bid_list": build_latest_bids_list(db, limit=3),
         })
     except Exception as e:
         logger.exception(f"[push] daily summary failed: {e}")

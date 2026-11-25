@@ -225,3 +225,49 @@ def already_pushed(db, template_id: int, since: datetime) -> bool:
         PushRecord.preview == 0,
         PushRecord.push_time >= since,
     ).first() is not None
+
+
+# ============================================================
+# 每日推送「最新标讯」结构化列表（2026-11-26 用户指定格式）
+# 标题 / 单位 / 金额 / 截止时间 / 分类 / 查看详情（蓝字链接）
+# ============================================================
+
+def count_recent(hours: int = 24) -> int:
+    """近 N 小时新增标讯数（每日推送的 {count}）"""
+    from app.models.bid import BidInfo
+    db = SessionLocal()
+    try:
+        since = datetime.now() - timedelta(hours=hours)
+        return db.query(BidInfo.id).filter(
+            BidInfo.status == 1, BidInfo.created_at >= since).count()
+    finally:
+        db.close()
+
+
+def build_latest_bids_list(db, limit: int = 3) -> str:
+    """最新 N 条标讯的结构化 markdown（任务与预览共用同一实现）"""
+    from app.models.bid import BidInfo
+    from app.models.dict import DictNoticeType
+
+    since = datetime.now() - timedelta(hours=24)
+    rows = (
+        db.query(BidInfo, DictNoticeType.name.label("nt_name"))
+        .join(DictNoticeType, DictNoticeType.id == BidInfo.notice_type_id, isouter=True)
+        .filter(BidInfo.status == 1, BidInfo.created_at >= since)
+        .order_by(BidInfo.publish_time.desc())
+        .limit(limit)
+        .all()
+    )
+    blocks = []
+    for b, nt in rows:
+        lines = [
+            f"标题：{(b.title or '').strip()[:60]}",
+            f"单位：{b.tenderee or '—'}",
+            f"金额：{b.budget or '—'}　截止时间："
+            + (b.deadline.strftime("%Y-%m-%d %H:%M") if b.deadline else "—"),
+            f"分类：{nt or '—'}",
+        ]
+        if b.source_url:
+            lines.append(f"[查看详情]({b.source_url})")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) or "（暂无新增标讯）"
