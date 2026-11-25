@@ -93,11 +93,24 @@ _PROJECT_CODE_RES = [
 _HAS_ALNUM = re.compile(r"[A-Za-z0-9]")
 
 # 截止时间：标签 + 中文日期 / ISO 日期
-_DEADLINE_LABELS = ("提交投标文件截止时间", "投标文件递交截止时间", "投标截止时间",
-                   "递交投标文件截止时间", "响应文件递交截止时间", "磋商截止时间",
-                   "报价截止时间", "截止时间", "投标截止日期", "开标时间")
-_CN_DATE = r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*(?:\d{1,2}\s*[:：]\s*\d{2})?)"
+# 按优先级排列：具体标签在前，通用标签在后（列表顺序 = 优先级，与文本位置无关）
+_DEADLINE_LABELS = (
+    "投标截止时间", "投标截止日期", "投标文件递交截止时间", "递交投标文件截止时间",
+    "提交投标文件截止时间", "投标文件提交截止时间", "响应文件递交截止时间",
+    "响应文件提交截止时间", "响应文件递交截止", "递交响应文件截止时间",
+    "磋商截止时间", "报价截止时间", "报价截止日期", "报价截止",
+    "递交截止时间", "提交截止时间", "递交截止", "提交截止",
+    "截止时间", "截止日期", "开标时间", "开启时间",
+)
+# 出现在标签前面时说明是「文件售卖/获取」截止，不是投标截止，必须跳过
+_DEADLINE_EXCLUDE = ("售卖", "获取", "发售", "下载", "购买", "报名", "注册")
+# 中文日期：支持 2025年7月4日 9:5 / 2025年7月4日9时5分 / 2025年7月4日9时5分30秒
+_CN_DATE = (r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*"
+            r"(?:\d{1,2}\s*[:：时]\s*\d{1,2}(?:\s*[:：分]\s*\d{1,2})?(?:\s*秒)?)?)")
+# ISO 日期：2025-07-08 15:00:00 / 2025/7/8 15:00
 _ISO_DATE = r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*\d{1,2}[:：]\d{2}(?::\d{2})?)"
+# 截止标签后多少字符内出现日期才算数（太大会把空表单字段后面无关日期误取）
+_DEADLINE_WINDOW = 80
 
 _REGION_RES = [
     re.compile(r"行政区域[：:]\s*([一-龥]{2,10}?(?:省|市|自治区|特别行政区))"),
@@ -118,29 +131,45 @@ def extract_project_code(text: str) -> Optional[str]:
 
 
 def _parse_cn_date(s: str) -> Optional[datetime]:
-    s = re.sub(r"\s+", "", s).replace("：", ":")
-    s = s.replace("年", "-").replace("月", "-").replace("日", "")
-    s = re.sub(r"(\d)-(\d)(?=\d)", r"\1-0\2", s)
-    for fmt in ("%Y-%m-%d%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    return None
+    """兼容 中文日期（2025年7月4日 9:5 / 9时5分30秒）与 ISO（2025-07-08 15:00:00）"""
+    s = re.sub(r"\s+", " ", s).strip()
+    s = (s.replace("年", "-").replace("月", "-").replace("日", " ")
+           .replace("时", ":").replace("分", ":").replace("秒", "")
+           .replace("：", ":").replace("/", "-"))
+    s = re.sub(r"\s+", " ", s).strip().rstrip(":").strip()
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})"
+                 r"(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$", s)
+    if not m:
+        return None
+    y, mo, d, h, mi, se = m.groups()
+    try:
+        return datetime(int(y), int(mo), int(d),
+                        int(h or 0), int(mi or 0), int(se or 0))
+    except ValueError:
+        return None
 
 
 def extract_deadline(text: str) -> Optional[datetime]:
+    """按标签优先级找投标截止时间。
+    同一标签可能多次出现，逐个尝试；标签前文含「售卖/获取/发售…」时跳过（那是文件获取截止）。
+    """
     for label in _DEADLINE_LABELS:
-        idx = text.find(label)
-        if idx < 0:
-            continue
-        window = text[idx: idx + 120]
-        for rx in (_CN_DATE, _ISO_DATE):
-            m = re.search(rx, window)
-            if m:
-                dt = _parse_cn_date(m.group(1))
-                if dt and 2020 <= dt.year <= 2035:
-                    return dt
+        start = 0
+        while True:
+            idx = text.find(label, start)
+            if idx < 0:
+                break
+            start = idx + 1
+            pre = text[max(0, idx - 14): idx]
+            if any(x in pre for x in _DEADLINE_EXCLUDE):
+                continue
+            window = text[idx: idx + _DEADLINE_WINDOW]
+            for rx in (_CN_DATE, _ISO_DATE):
+                m = rx.search(window)
+                if m:
+                    dt = _parse_cn_date(m.group(1))
+                    if dt and 2020 <= dt.year <= 2035:
+                        return dt
     return None
 
 
