@@ -104,3 +104,55 @@ export function runDataClean(payload?: Record<string, any>) {
 export function fetchDataCleanStatus() {
   return request.get('/api/v1/admin/data-clean/status')
 }
+
+// ===== 推送管理 =====
+// 模板（定时推送页）
+export function fetchPushTemplates() {
+  return request.get('/api/v1/admin/push/templates')
+}
+export function savePushTemplate(code: string, data: Record<string, any>) {
+  return request.put(`/api/v1/admin/push/templates/${code}`, data)
+}
+export function previewPushTemplate(code: string, data?: Record<string, any>) {
+  return request.post(`/api/v1/admin/push/templates/${code}/preview`, data || {})
+}
+export function testPushTemplate(code: string, data?: Record<string, any>) {
+  return request.post(`/api/v1/admin/push/templates/${code}/test`, data || {}, { timeout: 20000 })
+}
+// 临时推送
+export function previewManualPush(payload: Record<string, any>) {
+  return request.post('/api/v1/admin/push/manual/preview', payload)
+}
+export function sendManualBids(payload: Record<string, any>) {
+  return request.post('/api/v1/admin/push/manual/bids', payload, { timeout: 20000 })
+}
+export function sendManualText(payload: Record<string, any>) {
+  return request.post('/api/v1/admin/push/manual/text', payload, { timeout: 20000 })
+}
+// AI 生成
+export function aiGeneratePush(messages: Record<string, any>[]) {
+  return request.post('/api/v1/admin/push/ai/generate', { messages }, { timeout: 120000 })
+}
+export function aiSendPush(payload: Record<string, any>) {
+  return request.post('/api/v1/admin/push/ai/send', payload, { timeout: 20000 })
+}
+// 推送记录 / 通道
+export function fetchPushRecords(params?: Record<string, any>) {
+  return request.get('/api/v1/admin/push/records', { params })
+}
+export function fetchPushChannels() {
+  return request.get('/api/v1/admin/push/channels')
+}
+// 订阅用户（推送模块）
+export function previewSubscribe(id: number, days = 7) {
+  return request.get(`/api/v1/subscribes/${id}/preview`, { params: { days } })
+}
+export function pushSubscribeNow(id: number) {
+  return request.post(`/api/v1/subscribes/${id}/push`)
+}
+export function pushAllSubscribes() {
+  return request.post('/api/v1/subscribes/batch-push')
+}
+export function adminUpdateSubscribe(id: number, data: Record<string, any>) {
+  return request.put(`/api/v1/subscribes/${id}/admin`, data)
+}

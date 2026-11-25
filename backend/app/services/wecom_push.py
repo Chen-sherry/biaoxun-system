@@ -113,6 +113,30 @@ def send_text_sync(text: str) -> bool:
         return False
 
 
+def send_markdown_sync(title: str, content: str) -> Optional[dict]:
+    """同步发 markdown 消息（供 Celery worker / 后台接口调用）。
+    返回企微原始响应 {errcode, errmsg}；未配置 webhook 返回 None。"""
+    if not _webhook_available():
+        logger.warning("[wecom] WECOM_WEBHOOK 未配置，跳过 markdown 推送")
+        return None
+    msg = {
+        "msgtype": "markdown",
+        "markdown": {
+            "content": f"## {title}\n{content}",
+        },
+    }
+    try:
+        import requests
+        r = requests.post(_get_webhook(), json=msg, timeout=10)
+        data = r.json()
+        if data.get("errcode") != 0:
+            logger.error(f"[wecom] 同步 markdown 推送失败 {data}")
+        return data
+    except Exception as e:
+        logger.exception(f"[wecom] 同步 markdown 推送异常: {e}")
+        return None
+
+
 # === 业务场景封装 ===
 
 async def send_bid_daily_summary(

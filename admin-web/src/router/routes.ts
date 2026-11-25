@@ -52,7 +52,31 @@ export const constantRoutes: RouteRecordRaw[] = [
         path: 'subscribe/list',
         name: 'SubscribeList',
         component: () => import('@/views/subscribe/list.vue'),
-        meta: { title: '订阅管理', icon: 'Bell' },
+        meta: { title: '订阅管理', icon: 'Bell', hidden: true },
+      },
+      {
+        path: 'push/scheduled',
+        name: 'PushScheduled',
+        component: () => import('@/views/push/scheduled.vue'),
+        meta: { title: '定时推送', icon: 'Timer' },
+      },
+      {
+        path: 'push/manual',
+        name: 'PushManual',
+        component: () => import('@/views/push/manual.vue'),
+        meta: { title: '临时推送', icon: 'Promotion' },
+      },
+      {
+        path: 'push/subscribers',
+        name: 'PushSubscribers',
+        component: () => import('@/views/push/subscribers.vue'),
+        meta: { title: '订阅用户', icon: 'User' },
+      },
+      {
+        path: 'push/records',
+        name: 'PushRecords',
+        component: () => import('@/views/push/records.vue'),
+        meta: { title: '推送记录', icon: 'List' },
       },
       {
         path: 'data/clean',

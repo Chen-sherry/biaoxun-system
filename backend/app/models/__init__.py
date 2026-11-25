@@ -5,7 +5,7 @@ from app.models.dict import DictRegion, DictIndustry, DictNoticeType
 from app.models.bid import BidInfo, BidAttachment, BidSource
 from app.models.subscribe import BidSubscribe
 from app.models.member import MemberPackage, MemberOrder
-from app.models.push import PushRecord
+from app.models.push import PushRecord, PushTemplate
 
 __all__ = [
     "TimestampMixin",
@@ -14,5 +14,5 @@ __all__ = [
     "BidInfo", "BidAttachment", "BidSource",
     "BidSubscribe",
     "MemberPackage", "MemberOrder",
-    "PushRecord",
+    "PushRecord", "PushTemplate",
 ]
