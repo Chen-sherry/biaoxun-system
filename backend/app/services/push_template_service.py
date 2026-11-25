@@ -232,6 +232,45 @@ def already_pushed(db, template_id: int, since: datetime) -> bool:
 # 标题 / 单位 / 金额 / 截止时间 / 分类 / 查看详情（蓝字链接）
 # ============================================================
 
+def format_bids_rows(rows) -> str:
+    """把 (BidInfo, 公告类型名) 行集合格式化为结构化 markdown。
+    能抓到什么显示什么：空字段整行不显示（2026-11-26 用户指定）。
+    每日推送 / 到期预警 / 归档通知 / 自定义模板共用同一格式。
+    """
+    blocks = []
+    for b, nt in rows:
+        lines = [f"标题：{(b.title or '').strip()[:60]}"]
+        if b.tenderee:
+            lines.append(f"单位：{b.tenderee}")
+        mid = []
+        if b.budget:
+            mid.append(f"金额：{b.budget}")
+        if b.deadline:
+            mid.append(f"截止时间：{b.deadline.strftime('%Y-%m-%d %H:%M')}")
+        if mid:
+            lines.append("　".join(mid))
+        if nt:
+            lines.append(f"分类：{nt}")
+        if b.source_url:
+            lines.append(f"[查看详情]({b.source_url})")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) or "（无）"
+
+
+def query_bids_with_type(db, *filters, order_by=None, limit: int = 5):
+    """带公告类型 join 的标讯查询（归档/到期等任务用，与每日推送同格式）。
+    status 过滤由调用方传（每日/到期=1 已发布，归档=3 已归档）。
+    """
+    from app.models.bid import BidInfo
+    from app.models.dict import DictNoticeType
+    q = (db.query(BidInfo, DictNoticeType.name.label("nt_name"))
+         .join(DictNoticeType, DictNoticeType.id == BidInfo.notice_type_id, isouter=True)
+         .filter(*filters))
+    if order_by is not None:
+        q = q.order_by(order_by)
+    return q.limit(limit).all()
+
+
 def count_recent(hours: int = 24) -> int:
     """近 N 小时新增标讯数（每日推送的 {count}）——只统计已清洗提取的"""
     from app.models.bid import BidInfo
@@ -250,34 +289,9 @@ def build_latest_bids_list(db, limit: int = 3) -> str:
     过滤未清洗/未提取的条目（notice_type_id 为空 = 提取流程未跑过）。
     """
     from app.models.bid import BidInfo
-    from app.models.dict import DictNoticeType
-
     since = datetime.now() - timedelta(hours=24)
-    rows = (
-        db.query(BidInfo, DictNoticeType.name.label("nt_name"))
-        .join(DictNoticeType, DictNoticeType.id == BidInfo.notice_type_id, isouter=True)
-        .filter(BidInfo.status == 1, BidInfo.created_at >= since,
-                BidInfo.notice_type_id.isnot(None))  # 未提取的不发
-        .order_by(BidInfo.publish_time.desc())
-        .limit(limit)
-        .all()
-    )
-    blocks = []
-    for b, nt in rows:
-        # 能抓到什么显示什么：空字段整行不显示（2026-11-26 用户指定）
-        lines = [f"标题：{(b.title or '').strip()[:60]}"]
-        if b.tenderee:
-            lines.append(f"单位：{b.tenderee}")
-        mid = []
-        if b.budget:
-            mid.append(f"金额：{b.budget}")
-        if b.deadline:
-            mid.append(f"截止时间：{b.deadline.strftime('%Y-%m-%d %H:%M')}")
-        if mid:
-            lines.append("　".join(mid))
-        if nt:
-            lines.append(f"分类：{nt}")
-        if b.source_url:
-            lines.append(f"[查看详情]({b.source_url})")
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks) or "（暂无新增标讯）"
+    rows = query_bids_with_type(
+        db, BidInfo.status == 1, BidInfo.created_at >= since,
+        BidInfo.notice_type_id.isnot(None),   # 未提取的不发
+        order_by=BidInfo.publish_time.desc(), limit=limit)
+    return format_bids_rows(rows)

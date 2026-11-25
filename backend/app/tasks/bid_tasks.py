@@ -39,10 +39,13 @@ def archive_expired_bids():
         if count == 0:
             return {"archived": 0, "notified": False, "reason": "nothing_to_archive"}
 
-        # 归档通知：0 条归档时按设计也跳过（避免每天 2 点空消息打扰）
-        bid_list = "\n".join(
-            f"- [{(r.title or '')[:40]}]({r.source_url or ''})" for r in rows[:15]
-        )
+        # 归档通知：结构化卡片格式（与每日推送一致，2026-11-26），取被归档的前 5 条
+        from app.services.push_template_service import query_bids_with_type, format_bids_rows
+        sample_rows = query_bids_with_type(
+            db, BidInfo.status == 3, BidInfo.deadline.isnot(None),
+            BidInfo.deadline < cutoff,
+            order_by=BidInfo.deadline.desc(), limit=5)
+        bid_list = format_bids_rows(sample_rows)
         result = _send(db, code="archive_notice", variables={
             "date": datetime.now().strftime("%Y-%m-%d"),
             "count": str(count),

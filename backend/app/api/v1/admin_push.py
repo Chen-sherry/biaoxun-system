@@ -69,14 +69,16 @@ def save_template(code: str, payload: TemplateIn, db: Session = Depends(get_db),
     t = pts.get_template(db, code)
     if not t:
         raise HTTPException(status_code=404, detail="模板不存在")
+    allowed = [v for v in (t.variables or "").split(",") if v]
+    if t.kind == "custom" and "bid_list" not in allowed:
+        allowed.append("bid_list")  # 存量 custom 模板兼容（2026-01-26 前建的只存了 date,count）
     if payload.content is not None:
-        allowed = [v for v in (t.variables or "").split(",") if v]
         bad = pts.validate_variables(payload.content, allowed)
         if bad:
             raise HTTPException(status_code=400, detail=f"模板含允许清单外的变量：{', '.join(bad)}")
         t.content = payload.content
     if payload.title is not None:
-        bad = pts.validate_variables(payload.title, [v for v in (t.variables or "").split(",") if v])
+        bad = pts.validate_variables(payload.title, allowed)
         if bad:
             raise HTTPException(status_code=400, detail=f"标题含允许清单外的变量：{', '.join(bad)}")
         t.title = payload.title
@@ -107,6 +109,23 @@ def save_template(code: str, payload: TemplateIn, db: Session = Depends(get_db),
     return ApiResponse.ok(pts.template_to_dict(t), msg="模板已保存（执行时间即时生效）")
 
 
+@router.get("/variables", summary="可用变量清单（变量管理界面，单一事实源）")
+def list_variables(db: Session = Depends(get_db),
+                   user: SysUser = Depends(get_current_user)):
+    # 各任务实际传入的变量（与 push_tasks/bid_tasks 的 _send 调用对齐）
+    return ApiResponse.ok([
+        {"code": "date", "name": "当天日期", "example": "2026-11-26",
+         "scope": "所有模板",
+         "desc": "推送执行当天的日期"},
+        {"code": "count", "name": "数量统计", "example": "32",
+         "scope": "所有模板",
+         "desc": "每日=近24小时新增标讯数；到期预警=24小时内到期数；归档=本次归档数；自定义=近24小时新增数"},
+        {"code": "bid_list", "name": "标讯结构化列表", "example": "标题：xxx\n单位：xxx\n金额：xxx　截止时间：xxx\n分类：xxx\n[查看详情](链接)",
+         "scope": "每日/到期/归档/自定义",
+         "desc": "标讯卡片（标题/单位/金额/截止时间/分类/查看详情），有什么字段显示什么；每日取最新3条，到期取最先到期5条，归档取本次归档5条，自定义取最新3条"},
+    ])
+
+
 @router.post("/templates", summary="新增自定义定时推送（kind=custom）")
 def create_template(payload: TemplateCreateIn, db: Session = Depends(get_db),
                     user: SysUser = Depends(get_current_user)):
@@ -124,12 +143,12 @@ def create_template(payload: TemplateCreateIn, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="频率仅支持 daily / weekly")
     if payload.frequency == "weekly" and payload.weekday is None:
         raise HTTPException(status_code=400, detail="每周执行需选择星期几")
-    # 自定义模板可用变量固定为 date/count
-    bad = pts.validate_variables(payload.content, ["date", "count"]) + \
-          pts.validate_variables(payload.title, ["date", "count"])
+    # 自定义模板可用变量：date / count / bid_list（2026-11-26 起支持 bid_list）
+    bad = pts.validate_variables(payload.content, ["date", "count", "bid_list"]) + \
+          pts.validate_variables(payload.title, ["date", "count", "bid_list"])
     if bad:
         raise HTTPException(status_code=400,
-                            detail=f"自定义模板仅支持变量 {{date}} {{count}}，发现：{', '.join(sorted(set(bad)))}")
+                            detail=f"自定义模板仅支持变量 {{date}} {{count}} {{bid_list}}，发现：{', '.join(sorted(set(bad)))}")
     if not payload.title.strip() or not payload.content.strip():
         raise HTTPException(status_code=400, detail="标题和内容不能为空")
 
@@ -138,7 +157,7 @@ def create_template(payload: TemplateCreateIn, db: Session = Depends(get_db),
         schedule_time=payload.schedule_time, frequency=payload.frequency,
         weekday=payload.weekday if payload.frequency == "weekly" else None,
         title=payload.title, content=payload.content,
-        variables="date,count", enabled=1 if payload.enabled else 0,
+        variables="date,count,bid_list", enabled=1 if payload.enabled else 0,
         updated_by=user.id,
     )
     db.add(t)
@@ -180,28 +199,28 @@ def _build_real_vars(db: Session, code: str) -> dict:
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     if code == "expiring_alert":
+        from app.services.push_template_service import query_bids_with_type, format_bids_rows
         cutoff = now + timedelta(hours=24)
-        rows = (db.query(BidInfo)
-                .filter(BidInfo.status == 1, BidInfo.deadline.isnot(None),
-                        BidInfo.deadline >= now, BidInfo.deadline <= cutoff)
-                .order_by(BidInfo.deadline.asc()).limit(15).all())
-        bid_list = "\n".join(
-            f"- [{(r.title or '')[:40]}]({r.source_url or ''}) · "
-            f"{r.deadline.strftime('%m-%d %H:%M') if r.deadline else '?'}"
-            for r in rows) or "（暂无 24h 内截止的标讯）"
-        return {"date": now.strftime("%Y-%m-%d"), "count": str(len(rows)),
-                "bid_list": bid_list}
+        # 结构化卡片，与实际任务一致（最先到期 5 条）
+        rows = query_bids_with_type(
+            db, BidInfo.status == 1, BidInfo.deadline.isnot(None),
+            BidInfo.deadline >= now, BidInfo.deadline <= cutoff,
+            order_by=BidInfo.deadline.asc(), limit=5)
+        return {"date": now.strftime("%Y-%m-%d"),
+                "count": str(len(rows)),
+                "bid_list": format_bids_rows(rows) if rows else "（暂无 24h 内截止的标讯）"}
 
     if code == "archive_notice":
+        from app.services.push_template_service import query_bids_with_type, format_bids_rows
         cutoff = now - timedelta(days=30)
-        rows = (db.query(BidInfo)
-                .filter(BidInfo.status == 3, BidInfo.deadline.isnot(None),
-                        BidInfo.deadline < cutoff)
-                .order_by(BidInfo.deadline.desc()).limit(15).all())
-        bid_list = "\n".join(
-            f"- [{(r.title or '')[:40]}]({r.source_url or ''})" for r in rows) or "（暂无归档标讯）"
-        return {"date": now.strftime("%Y-%m-%d"), "count": str(len(rows)),
-                "bid_list": bid_list}
+        # 结构化卡片，与实际任务一致（本次归档样本 5 条）
+        rows = query_bids_with_type(
+            db, BidInfo.status == 3, BidInfo.deadline.isnot(None),
+            BidInfo.deadline < cutoff,
+            order_by=BidInfo.deadline.desc(), limit=5)
+        return {"date": now.strftime("%Y-%m-%d"),
+                "count": str(len(rows)),
+                "bid_list": format_bids_rows(rows) if rows else "（暂无归档标讯）"}
 
     # daily_summary：近 24h 新增 X 条 + 最新 3 条结构化卡片（与任务同一实现）
     from app.services.push_template_service import count_recent, build_latest_bids_list

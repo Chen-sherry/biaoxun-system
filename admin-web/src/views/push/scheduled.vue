@@ -9,7 +9,10 @@
 
     <div class="toolbar">
       <span class="hint">执行时间改动即时生效（每 5 分钟自检，无需重启服务）</span>
-      <el-button type="primary" @click="openCreate">＋ 新增定时推送</el-button>
+      <div>
+        <el-button @click="openVars">变量管理</el-button>
+        <el-button type="primary" @click="openCreate">＋ 新增定时推送</el-button>
+      </div>
     </div>
 
     <!-- 模板卡片 -->
@@ -148,6 +151,41 @@
       </template>
     </el-drawer>
 
+    <!-- 变量管理（与新增按钮同级入口） -->
+    <el-dialog v-model="varsDlg" title="变量管理" width="760px" destroy-on-close>
+      <el-alert type="info" :closable="false" class="mb12"
+        title="模板正文/标题中写 {变量名}，发送时替换为真实数据；点击「复制」拿到变量写法" />
+      <el-table :data="varsList" size="small">
+        <el-table-column label="变量" width="120">
+          <template #default="{ row }">
+            <el-tag type="primary" effect="plain">{{ '{' + row.code + '}' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="名称" width="120" />
+        <el-table-column label="说明" min-width="260">
+          <template #default="{ row }">
+            <div style="white-space: pre-line; line-height: 1.5">{{ row.desc }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="示例" min-width="160">
+          <template #default="{ row }">
+            <div style="white-space: pre-line; line-height: 1.5; color: var(--el-text-color-secondary)">
+              {{ row.example }}
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="scope" label="适用模板" width="130" />
+        <el-table-column label="" width="70">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="copyVar(row.code)">复制</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="varsDlg = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 新增定时推送 -->
     <el-dialog v-model="createDlg" title="新增定时推送" width="560px" destroy-on-close>
       <el-form label-width="90px" :model="createForm">
@@ -178,7 +216,7 @@
         </el-form-item>
         <el-form-item label="正文" required>
           <el-input v-model="createForm.content" type="textarea" :rows="7"
-            placeholder="支持变量 {date}（当天日期）、{count}（近24小时新增标讯数）" />
+            placeholder="支持变量 {date}（当天日期）、{count}（数量）、{bid_list}（最新3条标讯卡片）；点右上「变量管理」看全部" />
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="createForm.enabled" />
@@ -198,6 +236,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchPushTemplates, savePushTemplate, createPushTemplate, deletePushTemplate,
   previewPushTemplate, testPushTemplate, fetchPushRecords, fetchPushChannels,
+  fetchPushVariables,
 } from '@/api'
 import { mdLite } from '@/utils/mdLite'
 
@@ -239,6 +278,29 @@ const contentRef = ref()
 const cachedVars = ref<Record<string, string>>({})
 
 const createDlg = ref(false)
+
+// ===== 变量管理（顶栏入口，与新增按钮同级） =====
+const varsDlg = ref(false)
+const varsList = ref<any[]>([])
+async function openVars() {
+  varsDlg.value = true
+  if (!varsList.value.length) {
+    try {
+      const r: any = await fetchPushVariables()
+      // 拦截器已解包 response.data，r 直接就是数组（兼容包了一层的返回）
+      varsList.value = Array.isArray(r) ? r : (r?.data || [])
+    } catch { /* 弹窗已开，空表提示即可 */ }
+  }
+}
+async function copyVar(code: string) {
+  const text = `{${code}}`
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(`已复制 ${text}`)
+  } catch {
+    ElMessage.info(`变量写法：${text}`)
+  }
+}
 const creating = ref(false)
 const createForm = reactive({
   code: '', name: '', schedule_time: '', frequency: 'daily',

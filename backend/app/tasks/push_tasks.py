@@ -129,11 +129,13 @@ def send_expiring_bid_daily():
             logger.info("[push] expiring summary: 0 due bids, SKIP")
             return {"count": 0, "pushed": False, "skipped_reason": "no_expiring_bids"}
 
-        bid_list = "\n".join(
-            f"- [{(r.title or '')[:40]}]({r.source_url or ''}) · "
-            f"{r.deadline.strftime('%m-%d %H:%M') if r.deadline else '?'}"
-            for r in rows[:15]
-        ) or "（无）"
+        # 结构化卡片格式（与每日推送一致，2026-11-26），取最先到期的 5 条
+        from app.services.push_template_service import query_bids_with_type, format_bids_rows
+        sample_rows = query_bids_with_type(
+            db, BidInfo.status == 1, BidInfo.deadline.isnot(None),
+            BidInfo.deadline >= now, BidInfo.deadline <= cutoff,
+            order_by=BidInfo.deadline.asc(), limit=5)
+        bid_list = format_bids_rows(sample_rows)
 
         return _send(db, code="expiring_alert", variables={
             "date": now.strftime("%Y-%m-%d"),
@@ -184,9 +186,12 @@ def push_custom_templates():
             count = db.query(BidInfo.id).filter(
                 BidInfo.status == 1, BidInfo.created_at >= since).count()
 
+            # {bid_list}：近 24h 最新 3 条结构化卡片（与每日推送同格式）
+            from app.services.push_template_service import build_latest_bids_list
             r = _send(db, code=tpl.code, variables={
                 "date": datetime.now().strftime("%Y-%m-%d"),
                 "count": str(count),
+                "bid_list": build_latest_bids_list(db, limit=3),
             }, push_type="scheduled", tpl=tpl)
             results.append({"code": tpl.code, **r})
         return {"checked": len(rows), "results": results}

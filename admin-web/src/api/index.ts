@@ -125,6 +125,10 @@ export function previewPushTemplate(code: string, data?: Record<string, any>) {
 export function testPushTemplate(code: string, data?: Record<string, any>) {
   return request.post(`/api/v1/admin/push/templates/${code}/test`, data || {}, { timeout: 20000 })
 }
+// 可用变量清单（变量管理界面）
+export function fetchPushVariables() {
+  return request.get('/api/v1/admin/push/variables')
+}
 // 临时推送
 export function previewManualPush(payload: Record<string, any>) {
   return request.post('/api/v1/admin/push/manual/preview', payload)
