@@ -264,13 +264,19 @@ def build_latest_bids_list(db, limit: int = 3) -> str:
     )
     blocks = []
     for b, nt in rows:
-        lines = [
-            f"标题：{(b.title or '').strip()[:60]}",
-            f"单位：{b.tenderee or '—'}",
-            f"金额：{b.budget or '—'}　截止时间："
-            + (b.deadline.strftime("%Y-%m-%d %H:%M") if b.deadline else "—"),
-            f"分类：{nt or '—'}",
-        ]
+        # 能抓到什么显示什么：空字段整行不显示（2026-11-26 用户指定）
+        lines = [f"标题：{(b.title or '').strip()[:60]}"]
+        if b.tenderee:
+            lines.append(f"单位：{b.tenderee}")
+        mid = []
+        if b.budget:
+            mid.append(f"金额：{b.budget}")
+        if b.deadline:
+            mid.append(f"截止时间：{b.deadline.strftime('%Y-%m-%d %H:%M')}")
+        if mid:
+            lines.append("　".join(mid))
+        if nt:
+            lines.append(f"分类：{nt}")
         if b.source_url:
             lines.append(f"[查看详情]({b.source_url})")
         blocks.append("\n".join(lines))
