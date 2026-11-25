@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.database import get_db
 from app.models.bid import BidInfo, BidSource
@@ -64,7 +64,8 @@ def public_list_bids(
     db: Session = Depends(get_db),
 ):
     """门户搜索的核心接口。status 锁定=1（已发布），支持 AI 搜索关键词走 OR 匹配。"""
-    q = db.query(BidInfo).filter(BidInfo.status == 1)
+    q = db.query(BidInfo).filter(BidInfo.status == 1).options(
+        defer(BidInfo.content), defer(BidInfo.content_text))
 
     if keyword:
         like = f"%{keyword}%"
@@ -113,6 +114,7 @@ def hot_bids(
     items = (
         db.query(BidInfo)
         .filter(BidInfo.status == 1)
+        .options(defer(BidInfo.content), defer(BidInfo.content_text))
         .order_by(BidInfo.is_top.desc(), BidInfo.publish_time.desc())
         .limit(limit)
         .all()
