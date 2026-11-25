@@ -38,6 +38,8 @@ def _bid_to_public_dict(b: BidInfo, db: Session) -> dict:
         "win_amount": float(b.win_amount) if b.win_amount is not None else None,
         "procure_type": b.procure_type,
         "customer_group": b.customer_group,
+        "industry_name": db.query(DictIndustry.name)
+            .filter(DictIndustry.id == b.industry_id).scalar() if b.industry_id else None,
         "budget": b.budget,
         "source_url": b.source_url,
         "view_count": b.view_count or 0,

@@ -23,6 +23,7 @@
         <el-descriptions-item label="中标金额">{{ detail.win_amount ? '¥' + detail.win_amount.toLocaleString() : winnerText(null) }}</el-descriptions-item>
         <el-descriptions-item label="中标时间">{{ formatTime(detail.winner_publish_time) || winnerText(null) }}</el-descriptions-item>
         <el-descriptions-item label="客群">{{ detail.customer_group || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="行业">{{ detail.industry_name || '—' }}</el-descriptions-item>
       </el-descriptions>
     </div>
 
