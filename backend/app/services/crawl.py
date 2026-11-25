@@ -539,7 +539,9 @@ _GGZY_TITLE_SUFFIX = re.compile(r"[_|].*?(国家|全国)公共资源交易平台
 
 def _ggzy_detail(url: str, hash_id: str) -> Optional[Dict[str, Any]]:
     """
-    ggzy 详情页（聚合页）：完整标题在 div.fully h4，另带招标项目编号/信息来源/场景。
+    ggzy 详情页（聚合壳）：完整标题在 div.fully h4，另带招标项目编号/信息来源。
+    2026-11-26 修复：a/ 页只是聚合壳（3KB，无正文），真实正文（表格：招标人/报价/
+    开标时间等）在页面 JS 的 firstLastUrl 指向的 b/ 页 —— 必须再抓一层才能拿到。
     返回 raw dict，失败返回 None。
     """
     html = _fetch_url(url, timeout=20, retries=1)
@@ -560,14 +562,36 @@ def _ggzy_detail(url: str, hash_id: str) -> Optional[Dict[str, Any]]:
             "title": title,
         }
 
-        # 招标项目编号 / 项目编号
+        # 招标项目编号 / 项目编号（壳页有）
         text = soup.get_text(" ", strip=True)
         m = re.search(r"(?:招标|采购)?项目编号[：:]\s*([A-Za-z0-9\-]+)", text)
         if m:
             raw["project_code"] = m.group(1)
 
-        # 正文（聚合页内容较薄，但含标题/编号/相关公告，可辅助标题粗筛）
-        body = soup.select_one("div.fully") or soup.select_one("div.location")
+        # 真实正文：firstLastUrl → b/ 页（表格内容在这里）
+        body = None
+        m = re.search(r"var\s+firstLastUrl\s*=\s*'([^']+)'", html)
+        if m:
+            body_html = _fetch_url("https://www.ggzy.gov.cn" + m.group(1),
+                                   timeout=20, retries=1)
+            if body_html:
+                bsoup = BeautifulSoup(body_html, "html.parser")
+                # 发布时间（b 页 p_o 头部：发布时间：2026-11-25 15:50）
+                mp = re.search(r"发布时间[：:]\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})",
+                               bsoup.get_text(" ", strip=True))
+                if mp:
+                    try:
+                        raw["publish_time"] = datetime.strptime(
+                            mp.group(1), "%Y-%m-%d %H:%M")
+                    except ValueError:
+                        pass
+                body = (bsoup.select_one("div#mycontent")
+                        or bsoup.select_one("div.detail_content")
+                        or bsoup.select_one("div.detail"))
+
+        # 兜底：b/ 页抓取失败 → 用壳页正文（信息薄但至少有标题编号）
+        if body is None:
+            body = soup.select_one("div.fully") or soup.select_one("div.location")
         if body:
             raw["content"] = str(body)
             raw["content_text"] = body.get_text("\n", strip=True)
