@@ -8,6 +8,12 @@ celery_app = Celery(
     "bid_celery",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+    # worker 启动时必须加载任务模块，否则收到 beat 消息会报 unregistered task 并丢弃
+    include=[
+        "app.tasks.crawl_tasks",
+        "app.tasks.push_tasks",
+        "app.tasks.bid_tasks",
+    ],
 )
 
 celery_app.conf.update(
