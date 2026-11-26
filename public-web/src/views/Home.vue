@@ -348,7 +348,7 @@ onUnmounted(() => {
 .bid-card:hover { transform: translateY(-4px); border-color: var(--accent-line); box-shadow: var(--shadow-hover); }
 .bid-card:hover::before { transform: scaleY(1); }
 .bid-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.bid-idx { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.bid-idx { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--accent-deep); font-variant-numeric: tabular-nums; }
 .bid-arrow {
   width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
   color: var(--ink-400); background: var(--surface-soft); transition: all 0.3s var(--ease);

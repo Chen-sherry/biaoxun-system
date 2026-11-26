@@ -198,6 +198,8 @@ a { text-decoration: none; color: inherit; }
 .el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--accent) inset !important; }
 .el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-soft) !important; }
 .el-tag { border-radius: 6px !important; }
+/* 深色实心主标签底色加深：白字压 #0ea5e9 仅 2.77，改 #0284c7 后为 4.10 */
+.el-tag--primary.is-dark { background: var(--accent-deep) !important; border-color: var(--accent-deep) !important; }
 .el-button { border-radius: var(--r-sm) !important; font-weight: 500; }
 .el-pagination .el-pager li { border-radius: 6px !important; }
 

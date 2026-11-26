@@ -366,6 +366,7 @@ onMounted(async () => {
 .search-area :deep(.el-input-group__append .el-button) {
   height: auto; align-self: stretch; margin: 0; padding: 0 24px;
   border: none; border-radius: 12px; font-weight: 600; font-size: 15px;
+  color: #fff !important;   /* 否则被占位灰 #909399 覆盖，蓝底上完全看不清 */
 }
 .hint { font-size: 12px; color: var(--ink-500); margin-top: 10px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 5px; }
 .hint :deep(.el-icon) { color: var(--accent-strong); }
