@@ -45,6 +45,7 @@ from app.services.data_clean import (
     strip_html, clean_date,
     infer_notice_type_id, infer_procure_type, infer_customer_group,
     load_industries, infer_industry_id,
+    _load_notice_type_map,
 )
 
 logger = logging.getLogger(__name__)
@@ -706,6 +707,8 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
         # data_clean 的 load_industries / infer_notice_type_id 用的是 cursor()，要 DBAPI 连接
         conn = db.get_bind().raw_connection()
         industries = load_industries(conn)
+        # 公告类型 name->id（AI 分类结果落库用，按连接缓存）
+        notice_type_map = _load_notice_type_map(conn)
 
         # 预载去重键 → {dedup_key: content_text}
         existing: Dict[str, Optional[str]] = dict(
@@ -713,7 +716,7 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
         )
 
         stats = {"fetched": 0, "saved": 0, "updated": 0, "skipped": 0,
-                 "details": 0, "ai": 0}
+                 "details": 0, "ai": 0, "pending": 0}
 
         def handle(raw: Dict[str, Any]) -> None:
             if not raw.get("title"):
@@ -789,20 +792,50 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                 except Exception:
                     logger.warning("入库即提取失败 title=%s", str(mapped.get("title"))[:40], exc_info=True)
 
-            # 双线第二道（2026-11-26）：规则提取后关键字段仍不满 → AI 兜底提取；
-            # AI 返回空视为「确认没有」，任何失败一律放行入库，不阻塞采集
+            # 双线第二道（2026-11-26）：规则提取后关键字段仍不满 → AI 兜底提取，
+            # 同一次调用顺带让 AI 分类（行业/客群/公告类型，方案 A 不新增触发）。
+            #   - 调用失败（超时/HTTP 错误/解析失败/异常）→ status=0 进 /bid/pending 待审核
+            #   - AI 返回空 = 确认没有 → 照常放行；分类值须命中字典清单才覆盖规则结果
             try:
                 from app.services.ai_extract import missing_fields, ai_extract_missing
                 miss = missing_fields(mapped)
                 if miss:
-                    ai_vals = ai_extract_missing(
+                    ai_vals, ai_ok = ai_extract_missing(
                         mapped.get("title") or "",
-                        mapped.get("content_text") or "", miss)
-                    if ai_vals:
-                        mapped.update(ai_vals)
-                        stats["ai"] += 1
+                        mapped.get("content_text") or "", miss,
+                        class_options={
+                            "industry": [n for _, n, _ in industries],
+                            "notice_type": list(notice_type_map),
+                        })
+                    if not ai_ok:
+                        mapped["status"] = 0
+                        stats["pending"] += 1
+                        logger.info("[crawl] AI 提取失败→待审核 title=%s",
+                                    str(mapped.get("title"))[:40])
+                    else:
+                        for f in ("tenderee", "winner_unit", "win_amount"):
+                            if ai_vals.get(f) is not None:
+                                mapped[f] = ai_vals[f]
+                        ind_name = ai_vals.get("industry")
+                        if ind_name:
+                            iid = next((i for i, n, _ in industries
+                                        if n == ind_name), None)
+                            if iid is not None:
+                                mapped["industry_id"] = iid
+                        nt_name = ai_vals.get("notice_type")
+                        if nt_name:
+                            nid = notice_type_map.get(nt_name)
+                            if nid is not None:
+                                mapped["notice_type_id"] = nid
+                        if ai_vals.get("customer_group"):
+                            mapped["customer_group"] = ai_vals["customer_group"]
+                        if ai_vals:
+                            stats["ai"] += 1
             except Exception:
-                logger.warning("AI 兜底失败，按现状放行 title=%s",
+                # AI 环节异常同样视为失败 → 待审核人工兜底，不静默放行
+                mapped["status"] = 0
+                stats["pending"] += 1
+                logger.warning("AI 兜底异常→待审核 title=%s",
                                str(mapped.get("title"))[:40], exc_info=True)
 
             db.add(BidInfo(**mapped))
@@ -836,7 +869,8 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
         logger.info(
             f"[crawl] {code}: fetched={stats['fetched']} saved={stats['saved']} "
             f"updated={stats['updated']} skipped={stats['skipped']} "
-            f"details={stats['details']} ai={stats['ai']}"
+            f"details={stats['details']} ai={stats['ai']} "
+            f"pending={stats['pending']}"
         )
         return {
             "source": code,
@@ -847,6 +881,7 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
             "skipped": stats["skipped"],
             "details": stats["details"],
             "ai": stats["ai"],
+            "pending": stats["pending"],
         }
     finally:
         if conn is not None:

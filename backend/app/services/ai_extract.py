@@ -1,22 +1,32 @@
 # -*- coding: utf-8 -*-
-"""AI 兜底提取（双线策略第二道）
+"""AI 兜底提取（双线策略第二道）+ 分类搭车（方案 A）
 
 双线并行入库流程（2026-11-26）：
   第一道：data_clean.extract_fields_from_text 规则提取（免费、快）
   第二道：本模块——规则提取后关键字段仍缺失才调 DeepSeek 补提取；
           AI 返回 null 视为「确认没有」，按现状放行入库。
 
+方案 A（2026-11-26）：只在本次已触发的调用里顺带让 AI 分类
+  （行业 industry / 客群 customer_group / 公告类型 notice_type），
+  不为分类新增任何调用；分类值必须命中字典清单才生效，否则保留规则结果。
+
+失败语义（2026-11-26）：返回 (values, ok) 二元组
+  - ok=False：调用失败（超时/HTTP 错误/解析失败）→ 调用方把该条 status=0
+    转管理后台 /bid/pending 人工审核；
+  - ok=True：调用成功（values 只含确实提取到的，AI 返回 null = 确认没有）
+  - 未调用（无缺失/未配置 key/正文为空）返回 ({}, True)，不算失败。
+
 开销控制：
   - 只在 missing_fields() 判定为「不满」时才调用（不是每条都跑）
-  - 正文截断 4000 字、只问缺失字段、max_tokens=400、temperature=0
-  - 30s 超时、最多重试 1 次；任何失败返回 {} 降级放行，绝不阻塞入库
+  - 正文截断 4000 字、只问缺失字段+3 个分类、max_tokens=600、temperature=0
+  - 30s 超时、最多重试 1 次；绝不阻塞入库
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
@@ -42,6 +52,11 @@ _RESULT_LABEL_RE = re.compile(
 
 # winner_unit 脏值（提取到这些视为无效）
 _WINNER_BAD = {"未开标", "详见", "/", "-", "—", "无", "待定", "废标"}
+
+# 分类字段（方案 A 搭车）：customer_group 合法值固定 3 个（与前端下拉一致）；
+# industry / notice_type 是字典名称，合法清单由调用方经 class_options 传入
+_CLASS_KEYS = ("industry", "customer_group", "notice_type")
+_CUSTOMERS = ("政务", "国企", "民企")
 
 
 def missing_fields(mapped: Dict) -> List[str]:
@@ -69,16 +84,34 @@ def missing_fields(mapped: Dict) -> List[str]:
     return miss
 
 
-def _build_user_prompt(title: str, text: str, missing: List[str]) -> str:
+def _build_user_prompt(title: str, text: str, missing: List[str],
+                       class_options: Optional[Dict[str, List[str]]] = None) -> str:
     desc = "；".join(f"{k}（{_FIELD_DESC.get(k, k)}）" for k in missing)
-    example = ", ".join(f'"{k}": null' for k in missing)
+    example: Dict = {k: None for k in missing}
+    lines = [
+        f"从下面的招标/采购公告正文中提取这些字段：{desc}。",
+        "规则：正文中确实没有就填 null，不要编造；金额换算成元（数字）；"
+        "单位名称用全称。",
+    ]
+    # 分类搭车（方案 A）：只在本次调用已触发时顺带问，不新增调用
+    opts = class_options or {}
+    if opts.get("industry"):
+        lines.append("industry（所属行业）：只能从这份清单里选一个名称："
+                     + "、".join(opts["industry"]))
+        example["industry"] = opts["industry"][0]
+    lines.append("customer_group（采购人客群）：只能填 "
+                 + "、".join(_CUSTOMERS) + " 之一")
+    example["customer_group"] = _CUSTOMERS[0]
+    if opts.get("notice_type"):
+        lines.append("notice_type（公告类型）：只能从这份清单里选一个名称："
+                     + "、".join(opts["notice_type"]))
+        example["notice_type"] = opts["notice_type"][0]
     return (
-        f"从下面的招标/采购公告正文中提取这些字段：{desc}。\n"
-        f"规则：正文中确实没有就填 null，不要编造；金额换算成元（数字）；"
-        f"单位名称用全称。\n\n"
+        "\n".join(lines) + "\n\n"
         f"标题：{title}\n\n"
         f"正文：\n{text}\n\n"
-        f'只输出一个 JSON 对象，例如：{{{example}}}'
+        f"只输出一个 JSON 对象，例如："
+        f"{json.dumps(example, ensure_ascii=False)}"
     )
 
 
@@ -127,20 +160,52 @@ def _clean_value(field: str, value):
     return s
 
 
+def _clean_class(key: str, value,
+                 options: Dict[str, List[str]]) -> Optional[str]:
+    """分类值清洗：必须命中字典清单（客群限 3 值），否则 None（保留规则结果）"""
+    if value is None:
+        return None
+    s = str(value).strip().strip("「」“”\"'· ")
+    if not s:
+        return None
+    if key == "customer_group":
+        for g in _CUSTOMERS:
+            if g == s or g in s:
+                return g
+        return None
+    # 行业/公告类型：与调用方传入的字典清单精确比对（忽略内部空白）
+    norm = re.sub(r"\s+", "", s)
+    for name in options.get(key) or []:
+        if name == s or re.sub(r"\s+", "", name) == norm:
+            return name
+    return None
+
+
 def ai_extract_missing(title: str, content_text: str,
-                       missing: List[str]) -> Dict:
-    """调 DeepSeek 提取缺失字段。返回 {字段: 新值}，只含确实提取到的；
-    任何失败返回 {}（降级放行）。AI 返回 null = 确认没有，不写入。"""
+                       missing: List[str],
+                       class_options: Optional[Dict[str, List[str]]] = None,
+                       ) -> Tuple[Dict, bool]:
+    """调 DeepSeek 提取缺失字段，并顺带让 AI 分类（方案 A，不新增触发）。
+
+    返回 (values, ok)：
+      - ok=True：调用成功——values 只含确实提取/分类到的（AI 返回 null
+        = 确认没有，不写入）；
+      - ok=False：调用失败（超时/HTTP 错误/解析失败）→ 调用方应把该条
+        status=0 转管理后台待审核；
+      - 未调用（无缺失/未配置 key/正文为空）返回 ({}, True)，不算失败。
+    class_options: {"industry": [字典行业名...], "notice_type": [字典类型名...]}，
+    提供时 prompt 附带清单让模型从中选择，返回前校验命中才写入 values。
+    """
     if not missing:
-        return {}
+        return {}, True
     key = settings.deepseek_api_key
     if not key:
         logger.debug("[ai_extract] deepseek_api_key 未配置，跳过 AI 提取")
-        return {}
+        return {}, True
 
     text = (content_text or "")[:_TEXT_TRUNCATE]
     if not text:
-        return {}
+        return {}, True
 
     payload = {
         "model": settings.deepseek_model,
@@ -148,9 +213,10 @@ def ai_extract_missing(title: str, content_text: str,
             {"role": "system",
              "content": "你是招投标公告信息提取引擎，只输出 JSON，不要任何解释。"},
             {"role": "user",
-             "content": _build_user_prompt(title or "", text, missing)},
+             "content": _build_user_prompt(title or "", text, missing,
+                                           class_options)},
         ],
-        "max_tokens": 400,
+        "max_tokens": 600,
         "temperature": 0,
     }
     url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
@@ -172,14 +238,21 @@ def ai_extract_missing(title: str, content_text: str,
                 "[ai_extract] 调用失败 attempt=%d fields=%s err=%s",
                 attempt + 1, missing, str(e)[:200])
     if raw_json is None:
-        return {}
+        # 超时/HTTP 错误/解析失败 → 失败信号，由调用方转待审核
+        return {}, False
 
+    opts = class_options or {}
     out: Dict = {}
     for f in missing:
         v = _clean_value(f, raw_json.get(f))
         if v is not None:
             out[f] = v
-    logger.info("[ai_extract] fields=%s -> got=%s missing_left=%s",
+    for ck in _CLASS_KEYS:
+        cv = _clean_class(ck, raw_json.get(ck), opts)
+        if cv is not None:
+            out[ck] = cv
+    logger.info("[ai_extract] fields=%s -> got=%s missing_left=%s class=%s",
                 missing, list(out.keys()),
-                [f for f in missing if f not in out])
-    return out
+                [f for f in missing if f not in out],
+                [k for k in _CLASS_KEYS if k in out])
+    return out, True
