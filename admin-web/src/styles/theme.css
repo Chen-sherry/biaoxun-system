@@ -1,0 +1,195 @@
+/* ============================================================
+   标讯速递 · 统一设计系统 (Design Tokens)
+   风格：深空蓝科技 / 冷色高对比 / 几何线条 / 轻量渐变发光
+   本文件必须在 element-plus/dist/index.css 之后引入
+   ============================================================ */
+
+:root {
+  /* ---- 品牌深空蓝阶 ---- */
+  --brand-950: #040a14;
+  --brand-900: #071021;
+  --brand-850: #0a172c;
+  --brand-800: #0d1e38;
+  --brand-700: #122b4d;
+  --brand-600: #1a3a63;
+
+  /* ---- 强调色（冷色）---- */
+  --accent: #38bdf8;          /* sky-400 主强调 */
+  --accent-strong: #0ea5e9;   /* sky-500 实心按钮 */
+  --accent-deep: #0284c7;     /* sky-600 深按 */
+  --accent-cyan: #22d3ee;     /* cyan-400 发光点 */
+  --accent-violet: #818cf8;   /* indigo-400 辅助光 */
+  --accent-glow: rgba(56, 189, 248, 0.45);
+  --accent-soft: rgba(56, 189, 248, 0.12);
+  --accent-line: rgba(56, 189, 248, 0.28);
+
+  /* ---- 语义色 ---- */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+
+  /* ---- 文字（浅底）---- */
+  --ink-900: #0b1b2e;
+  --ink-800: #1b2f47;
+  --ink-700: #33475f;
+  --ink-500: #64748b;
+  --ink-400: #94a3b8;
+
+  /* ---- 文字（深底）---- */
+  --on-dark: #e8f2ff;
+  --on-dark-soft: #a9c2dd;
+  --on-dark-mute: #7591b2;
+
+  /* ---- 表面与描边 ---- */
+  --surface: #ffffff;
+  --surface-soft: #f4f8fd;
+  --surface-cool: #eef4fb;
+  --line: #e4edf7;
+  --line-strong: #d3e0ef;
+
+  /* ---- 圆角 / 阴影 / 动效 ---- */
+  --r-sm: 8px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --shadow-card: 0 4px 24px rgba(15, 40, 70, 0.06), 0 1px 3px rgba(15, 40, 70, 0.04);
+  --shadow-hover: 0 14px 36px rgba(15, 40, 70, 0.13);
+  --shadow-glow: 0 10px 30px rgba(14, 165, 233, 0.28);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ---- Element Plus 主题覆盖 ---- */
+  --el-color-primary: #0ea5e9;
+  --el-color-primary-light-3: #38bdf8;
+  --el-color-primary-light-5: #7dd3fc;
+  --el-color-primary-light-7: #bae6fd;
+  --el-color-primary-light-8: #d9f2ff;
+  --el-color-primary-light-9: #f0f9ff;
+  --el-color-primary-dark-2: #0284c7;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 999px;
+  --el-font-size-base: 14px;
+  --el-text-color-primary: var(--ink-900);
+  --el-text-color-regular: var(--ink-700);
+  --el-border-color: var(--line-strong);
+  --el-border-color-light: var(--line);
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--surface-soft);
+  color: var(--ink-800);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+a { text-decoration: none; color: inherit; }
+
+/* 数字使用等宽表格数字，科技感 + 对齐 */
+.stat-num, .count-num { font-variant-numeric: tabular-nums; }
+
+/* ---- 通用：科技卡片 ---- */
+.tech-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+  transition: transform 0.35s var(--ease), box-shadow 0.35s var(--ease), border-color 0.35s var(--ease);
+}
+.tech-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-hover);
+}
+
+/* ---- 通用：发光主按钮 ---- */
+.neon-btn.el-button--primary,
+.el-button--primary {
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep));
+  border-color: transparent;
+  box-shadow: 0 6px 18px rgba(14, 165, 233, 0.28);
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong)) !important;
+  border-color: transparent !important;
+  box-shadow: var(--shadow-glow) !important;
+}
+.el-button--primary:active { background: var(--accent-deep) !important; }
+
+/* ---- 通用：区块标题（左侧发光竖线）---- */
+.section-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent-deep);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.section-kicker::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: linear-gradient(var(--accent), var(--accent-cyan));
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* ---- 通用：网格纹理层（用于深色区块）---- */
+.grid-overlay {
+  background-image: url('../assets/brand/bg-grid.svg');
+  background-repeat: repeat;
+  background-size: 48px 48px;
+}
+
+/* ---- 深色面板文字 ---- */
+.on-dark { color: var(--on-dark); }
+.on-dark-soft { color: var(--on-dark-soft); }
+
+/* ---- 动效 ---- */
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@keyframes radar-scan {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- Element Plus 细节现代化 ---- */
+.el-card { border-radius: var(--r-md) !important; border-color: var(--line) !important; }
+.el-input__wrapper {
+  border-radius: var(--r-sm) !important;
+  box-shadow: 0 0 0 1px var(--line-strong) inset !important;
+  transition: box-shadow 0.25s var(--ease) !important;
+}
+.el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--accent) inset !important; }
+.el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px var(--accent-soft) !important; }
+.el-tag { border-radius: 6px !important; }
+.el-button { border-radius: var(--r-sm) !important; font-weight: 500; }
+.el-pagination .el-pager li { border-radius: 6px !important; }
+
+/* 深色滚动条 */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c7d6e8; border-radius: 6px; border: 2px solid var(--surface-soft); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }

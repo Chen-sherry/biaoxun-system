@@ -1,25 +1,24 @@
-@use 'element-plus/theme-chalk/dark/css-vars.css';
-
-:root {
-  --app-bg: #f5f7fa;
-  --app-primary: #409eff;
-}
+/* 后台基础样式（主题令牌见 theme.css，需在其之前由 main.ts 加载顺序控制）
+   注意：theme.css 在 main.ts 中于本文件之前引入，Element Plus 变量覆盖以 theme.css 为准 */
 
 html, body, #app {
   height: 100%;
   margin: 0;
   padding: 0;
-  background: var(--app-bg);
-  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--surface-soft);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
-.page-container {
-  padding: 16px;
-}
+.page-container { padding: 16px; }
 
-.page-card {
-  background: #fff;
-  border-radius: 6px;
-  padding: 16px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-}
+/* 深色滚动条 */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c7d6e8; border-radius: 6px; border: 2px solid var(--surface-soft); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* Element Plus 卡片/表格科技化微调 */
+.el-card { border-radius: var(--r-md) !important; }
+.el-table { --el-table-border-color: var(--line); }
+.el-table th.el-table__cell { background: var(--surface-cool) !important; color: var(--ink-700) !important; font-weight: 600; }
+.el-pagination { --el-pagination-button-bg-color: var(--surface); }

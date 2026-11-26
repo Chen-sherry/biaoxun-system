@@ -2,118 +2,125 @@
   <div class="home-page">
     <!-- Hero 区：大搜索框 + 高级筛选 -->
     <section class="hero">
+      <div class="hero-grid" aria-hidden="true"></div>
+      <div class="hero-glow" aria-hidden="true"></div>
+      <img class="hero-art" :src="heroArt" alt="" aria-hidden="true" />
       <div class="hero-inner">
-        <h1 class="hero-title">🏛️ 全国标讯 · 智能搜索</h1>
-        <p class="hero-sub">聚合公共资源交易平台、政府采购网、招投标公告，AI 语义匹配 + 多条件精准筛选</p>
+        <div class="hero-copy">
+          <span class="hero-kicker"><el-icon><DataLine /></el-icon> BID INTELLIGENCE PLATFORM</span>
+          <h1 class="hero-title">全国标讯 · 智能搜索</h1>
+          <p class="hero-sub">聚合公共资源交易平台、政府采购网、招投标公告，AI 语义匹配 + 多条件精准筛选</p>
 
-        <!-- AI 搜索框常驻 -->
-        <div class="ai-search-box">
-          <el-input
-            v-model="aiKeyword"
-            size="large"
-            placeholder="试试：帮我找培训场地相关的招标公告"
-            @keyup.enter="onAiSearch"
-            clearable
-          >
-            <template #prefix><el-icon><MagicStick /></el-icon></template>
-            <template #append>
-              <el-button :icon="MagicStick" type="primary" @click="onAiSearch">智能检索</el-button>
-            </template>
-          </el-input>
-          <div class="search-switch">
-            <el-radio-group v-model="searchMode" size="small">
-              <el-radio-button value="ai">🤖 智能检索</el-radio-button>
-              <el-radio-button value="kw">🔍 高级检索</el-radio-button>
-            </el-radio-group>
-          </div>
-        </div>
-
-        <!-- 折叠式高级筛选面板 -->
-        <el-collapse v-model="filterOpen" class="filter-panel" :expand-icon-position="'start'">
-          <el-collapse-item name="open">
-            <template #title>
-              <span class="filter-title">🎛️ 高级筛选（点击展开 / 收起）</span>
-            </template>
-            <el-row :gutter="16">
-              <el-col :xs="24" :sm="12" :span="8">
-                <el-form-item label="公告类型">
-                  <el-select v-model="filter.notice_type_id" clearable placeholder="全部" style="width:100%">
-                    <el-option v-for="t in noticeTypes" :key="t.id" :label="t.name" :value="t.id" />
-                  </el-select>
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :sm="12" :span="8">
-                <el-form-item label="地区代码">
-                  <el-input v-model="filter.region_code" placeholder="如 110000" clearable />
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :sm="12" :span="8">
-                <el-form-item label="客群">
-                  <el-select v-model="filter.customer_group" clearable placeholder="全部" style="width:100%">
-                    <el-option label="政务" value="政务" />
-                    <el-option label="国企" value="国企" />
-                    <el-option label="民企" value="民企" />
-                  </el-select>
-                </el-form-item>
-              </el-col>
-            </el-row>
-            <el-row :gutter="16">
-              <el-col :xs="24" :sm="12" :span="12">
-                <el-form-item label="发布时间范围">
-                  <el-date-picker v-model="filter.date_range" type="daterange" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width:100%" />
-                </el-form-item>
-              </el-col>
-              <el-col :xs="24" :sm="12" :span="12">
-                <el-form-item label="中标时间范围">
-                  <el-date-picker v-model="filter.winner_date_range" type="daterange" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width:100%" />
-                </el-form-item>
-              </el-col>
-            </el-row>
-            <div style="text-align:right">
-              <el-button @click="resetFilter">重置</el-button>
-              <el-button type="primary" @click="onTraditionalSearch">应用筛选 →</el-button>
+          <!-- AI 搜索框常驻 -->
+          <div class="ai-search-box">
+            <el-input
+              v-model="aiKeyword"
+              size="large"
+              placeholder="试试：帮我找培训场地相关的招标公告"
+              @keyup.enter="onAiSearch"
+              clearable
+            >
+              <template #prefix><el-icon><MagicStick /></el-icon></template>
+              <template #append>
+                <el-button :icon="MagicStick" type="primary" @click="onAiSearch">智能检索</el-button>
+              </template>
+            </el-input>
+            <div class="search-switch">
+              <el-radio-group v-model="searchMode" size="small">
+                <el-radio-button value="ai"><el-icon><MagicStick /></el-icon> 智能检索</el-radio-button>
+                <el-radio-button value="kw"><el-icon><Search /></el-icon> 高级检索</el-radio-button>
+              </el-radio-group>
             </div>
-          </el-collapse-item>
-        </el-collapse>
+          </div>
+
+          <!-- 折叠式高级筛选面板 -->
+          <el-collapse v-model="filterOpen" class="filter-panel" :expand-icon-position="'start'">
+            <el-collapse-item name="open">
+              <template #title>
+                <span class="filter-title"><el-icon><Operation /></el-icon> 高级筛选（点击展开 / 收起）</span>
+              </template>
+              <el-row :gutter="16">
+                <el-col :xs="24" :sm="12" :span="8">
+                  <el-form-item label="公告类型">
+                    <el-select v-model="filter.notice_type_id" clearable placeholder="全部" style="width:100%">
+                      <el-option v-for="t in noticeTypes" :key="t.id" :label="t.name" :value="t.id" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :span="8">
+                  <el-form-item label="地区代码">
+                    <el-input v-model="filter.region_code" placeholder="如 110000" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :span="8">
+                  <el-form-item label="客群">
+                    <el-select v-model="filter.customer_group" clearable placeholder="全部" style="width:100%">
+                      <el-option label="政务" value="政务" />
+                      <el-option label="国企" value="国企" />
+                      <el-option label="民企" value="民企" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :xs="24" :sm="12" :span="12">
+                  <el-form-item label="发布时间范围">
+                    <el-date-picker v-model="filter.date_range" type="daterange" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :span="12">
+                  <el-form-item label="中标时间范围">
+                    <el-date-picker v-model="filter.winner_date_range" type="daterange" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <div style="text-align:right; display:flex; gap:12px; justify-content:flex-end">
+                <el-button @click="resetFilter">重置</el-button>
+                <el-button type="primary" @click="onTraditionalSearch">应用筛选 <el-icon><Right /></el-icon></el-button>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
       </div>
+      <!-- 底部渐变过渡 -->
+      <div class="hero-fade" aria-hidden="true"></div>
     </section>
 
     <!-- 门户统计 -->
     <section class="stats-bar">
-      <div class="stat-item">
-        <div class="stat-num">{{ stats.total_bids }}</div>
-        <div class="stat-label">累计标讯</div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-num">{{ stats.today_new }}</div>
-        <div class="stat-label">今日新增</div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-num">{{ stats.sources_enabled }}</div>
-        <div class="stat-label">启用采集源</div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-num">实时</div>
-        <div class="stat-label">自动更新中</div>
+      <div class="stat-item" v-for="(stat, idx) in statCards" :key="stat.label">
+        <span class="stat-icon" :style="{ '--i-color': stat.color }"><el-icon><component :is="stat.icon" /></el-icon></span>
+        <div class="stat-text">
+          <div class="stat-num">{{ stat.value }}</div>
+          <div class="stat-label">{{ stat.label }}</div>
+        </div>
+        <span class="stat-index">0{{ idx + 1 }}</span>
       </div>
     </section>
 
     <!-- 热门标讯列表 -->
     <section class="content-section">
       <div class="section-header">
-        <h2>🔥 最新标讯</h2>
-        <el-button link type="primary" @click="$router.push('/search')">查看全部 →</el-button>
+        <div>
+          <span class="section-kicker">LATEST BIDS</span>
+          <h2><el-icon><TrendCharts /></el-icon> 最新标讯</h2>
+        </div>
+        <el-button text type="primary" @click="$router.push('/search')">查看全部 <el-icon><Right /></el-icon></el-button>
       </div>
       <el-row :gutter="16">
-        <el-col v-for="b in hotBids" :key="b.id" :xs="24" :sm="12" :span="12" style="margin-bottom:12px">
+        <el-col v-for="b in hotBids" :key="b.id" :xs="24" :sm="12" :span="12" style="margin-bottom:14px">
           <div class="bid-card" @click="$router.push(`/bid/${b.id}`)">
+            <div class="bid-card-top">
+              <span class="bid-idx">#{{ String(b.id).slice(-4) }}</span>
+              <span class="bid-arrow"><el-icon><Right /></el-icon></span>
+            </div>
             <div class="bid-title">{{ b.title }}</div>
             <div class="bid-meta">
-              <el-tag v-if="b.notice_type" size="small" type="primary">{{ b.notice_type }}</el-tag>
-              <span>{{ formatTime(b.publish_time) }}</span>
-              <span v-if="b.region_name">· {{ b.region_name }}</span>
+              <el-tag v-if="b.notice_type" size="small" type="primary" effect="dark">{{ b.notice_type }}</el-tag>
+              <span><el-icon><Calendar /></el-icon> {{ formatTime(b.publish_time) }}</span>
+              <span v-if="b.region_name"><el-icon><Location /></el-icon> {{ b.region_name }}</span>
             </div>
-            <div class="bid-sub" v-if="b.tenderee">采购人：{{ b.tenderee }}</div>
+            <div class="bid-sub" v-if="b.tenderee"><el-icon><OfficeBuilding /></el-icon> 采购人：{{ b.tenderee }}</div>
           </div>
         </el-col>
       </el-row>
@@ -122,9 +129,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { MagicStick } from '@element-plus/icons-vue'
+import { MagicStick, Search, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock } from '@element-plus/icons-vue'
+import heroArt from '@/assets/brand/hero-illustration.svg'
 import { fetchPublicHot, fetchPortalStats, fetchPublicNoticeTypes } from '@/api'
 
 const router = useRouter()
@@ -134,6 +142,14 @@ const filterOpen = ref<string[]>([])  // 默认收起，点击展开
 const noticeTypes = ref<any[]>([])
 const hotBids = ref<any[]>([])
 const stats = reactive({ total_bids: 0, today_new: 0, sources_enabled: 0 })
+
+const statCards = computed(() => [
+  { label: '累计标讯', value: stats.total_bids.toLocaleString(), icon: Tickets, color: '#38bdf8' },
+  { label: '今日新增', value: stats.today_new.toLocaleString(), icon: TrendCharts, color: '#22d3ee' },
+  { label: '启用采集源', value: stats.sources_enabled, icon: Connection, color: '#818cf8' },
+  { label: '自动更新中', value: '实时', icon: Clock, color: '#10b981' },
+])
+
 const filter = reactive({
   notice_type_id: null as number | null,
   region_code: '',
@@ -180,52 +196,170 @@ onMounted(async () => {
 
 <style scoped>
 .hero {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 48px 24px 32px;
-  color: #fff;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(118deg, var(--brand-950) 0%, var(--brand-850) 48%, #0c2647 100%);
+  padding: 56px 24px 64px;
+  color: var(--on-dark);
 }
-.hero-inner { max-width: 900px; margin: 0 auto; }
-.hero-title { text-align: center; font-size: 32px; margin: 0 0 8px; }
-.hero-sub { text-align: center; opacity: 0.9; margin-bottom: 32px; font-size: 15px; }
-
-.ai-search-box { max-width: 700px; margin: 0 auto; }
-.ai-search-box :deep(.el-input__wrapper) { font-size: 16px; height: 48px; }
-.search-switch { text-align: center; margin-top: 16px; }
-
-.filter-panel { max-width: 900px; margin: 24px auto 0; background: rgba(255,255,255,0.95); border-radius: 8px; padding: 4px 16px; }
-.filter-title { font-size: 14px; font-weight: 600; color: #667eea; }
+.hero-grid {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0.85;
+  background-image: url('@/assets/brand/bg-grid.svg');
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 60% 40%, #000 30%, transparent 85%);
+}
+.hero-glow {
+  position: absolute; top: -180px; left: -120px; width: 720px; height: 620px; pointer-events: none;
+  background-image: url('@/assets/brand/bg-glow.svg');
+  background-size: cover; opacity: 0.9; animation: pulse-glow 8s ease-in-out infinite;
+}
+.hero-art {
+  position: absolute; right: -40px; top: 50%; transform: translateY(-52%);
+  width: 520px; max-width: 46vw; height: auto; pointer-events: none;
+  opacity: 0.95; filter: drop-shadow(0 0 40px rgba(14, 165, 233, 0.18));
+  animation: float-slow 9s ease-in-out infinite;
+}
+.hero-inner { position: relative; z-index: 2; max-width: 920px; margin: 0 auto; }
+.hero-copy { max-width: 720px; }
+.hero-kicker {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 700; letter-spacing: 2px; color: var(--accent);
+  padding: 5px 12px; border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.08);
+}
+.hero-title {
+  font-size: 40px; font-weight: 800; letter-spacing: 1px;
+  margin: 18px 0 12px; line-height: 1.2; color: #fff;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  animation: fade-up 0.6s var(--ease) both;
+}
+.hero-sub {
+  color: var(--on-dark-soft); margin-bottom: 30px; font-size: 16px; line-height: 1.6;
+  animation: fade-up 0.6s 0.08s var(--ease) both;
+}
+.ai-search-box { max-width: 700px; animation: fade-up 0.6s 0.16s var(--ease) both; }
+.ai-search-box :deep(.el-input__wrapper) {
+  height: 52px; background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4) inset, 0 12px 32px rgba(0, 0, 0, 0.2) !important;
+  border-radius: 10px 0 0 10px;
+}
+.ai-search-box :deep(.el-input-group__append) {
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep)) !important;
+  border: none !important; border-radius: 0 10px 10px 0 !important;
+}
+.ai-search-box :deep(.el-input-group__append .el-button) { color: #fff !important; font-weight: 600; height: 52px; }
+.search-switch { text-align: left; margin-top: 16px; }
+.search-switch :deep(.el-radio-button__inner) {
+  background: rgba(255, 255, 255, 0.06); border-color: rgba(148, 197, 232, 0.24);
+  color: var(--on-dark-soft); padding: 9px 18px; display: inline-flex; align-items: center; gap: 5px;
+}
+.search-switch :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.3), rgba(34, 211, 238, 0.14)) !important;
+  border-color: var(--accent) !important; color: #fff !important;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.2) inset;
+}
+.filter-panel {
+  max-width: 720px; margin: 20px auto 0 0; background: rgba(255, 255, 255, 0.96);
+  border-radius: var(--r-md); padding: 4px 18px; border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+.filter-title { font-size: 14px; font-weight: 600; color: var(--accent-deep); display: inline-flex; align-items: center; gap: 7px; }
+.hero-fade {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 60px; pointer-events: none;
+  background: linear-gradient(180deg, transparent, var(--surface-soft));
+}
 
 .stats-bar {
-  max-width: 1200px; margin: -16px auto 24px; padding: 20px;
-  background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-  display: grid; grid-template-columns: repeat(4,1fr);
+  position: relative; z-index: 3;
+  max-width: 1200px; margin: -32px auto 30px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-hover);
+  display: grid; grid-template-columns: repeat(4, 1fr);
 }
-.stat-item { text-align: center; }
-.stat-num { font-size: 28px; font-weight: 700; color: #1e5799; }
-.stat-label { font-size: 13px; color: #909399; margin-top: 4px; }
+.stat-item {
+  position: relative; display: flex; align-items: center; gap: 14px;
+  padding: 16px 20px; border-radius: var(--r-md); transition: background 0.25s;
+}
+.stat-item:not(:last-child)::after {
+  content: ''; position: absolute; right: 0; top: 20%; height: 60%; width: 1px;
+  background: linear-gradient(transparent, var(--line-strong), transparent);
+}
+.stat-item:hover { background: var(--surface-soft); }
+.stat-icon {
+  flex: none; width: 46px; height: 46px; border-radius: 12px;
+  display: grid; place-items: center; font-size: 21px;
+  color: var(--i-color);
+  background: color-mix(in srgb, var(--i-color) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--i-color) 26%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--i-color) 20%, transparent);
+}
+.stat-num { font-size: 27px; font-weight: 800; color: var(--ink-900); line-height: 1.1; }
+.stat-label { font-size: 13px; color: var(--ink-500); margin-top: 3px; }
+.stat-index {
+  position: absolute; top: 10px; right: 14px; font-size: 11px; font-weight: 700;
+  color: var(--line-strong); font-variant-numeric: tabular-nums;
+}
 
-.content-section { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
-.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.section-header h2 { margin: 0; font-size: 20px; }
+.content-section { max-width: 1200px; margin: 0 auto; padding: 0 24px 8px; }
+.section-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
+.section-header h2 {
+  margin: 6px 0 0; font-size: 22px; font-weight: 700; color: var(--ink-900);
+  display: flex; align-items: center; gap: 9px;
+}
+.section-header h2 :deep(.el-icon) { color: var(--accent-strong); }
+.section-header :deep(.el-button) { font-weight: 600; }
 
 .bid-card {
-  background: #fff; border-radius: 8px; padding: 16px; cursor: pointer;
-  transition: all .2s; box-shadow: 0 2px 8px rgba(0,0,0,0.05); height: 100%;
+  position: relative; height: 100%; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 18px 18px 16px;
+  box-shadow: var(--shadow-card);
+  transition: transform 0.35s var(--ease), box-shadow 0.35s var(--ease), border-color 0.35s var(--ease);
+  overflow: hidden;
 }
-.bid-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.1); }
-.bid-title { font-size: 15px; font-weight: 600; color: #303133; line-height: 1.5; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.bid-meta { font-size: 12px; color: #909399; display: flex; gap: 8px; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
-.bid-sub { font-size: 12px; color: #606266; }
+.bid-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(var(--accent), var(--accent-cyan));
+  transform: scaleY(0); transform-origin: center; transition: transform 0.35s var(--ease);
+}
+.bid-card:hover { transform: translateY(-4px); border-color: var(--accent-line); box-shadow: var(--shadow-hover); }
+.bid-card:hover::before { transform: scaleY(1); }
+.bid-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.bid-idx { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.bid-arrow {
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--ink-400); background: var(--surface-soft); transition: all 0.3s var(--ease);
+}
+.bid-card:hover .bid-arrow { background: var(--accent); color: #fff; transform: translateX(2px); box-shadow: 0 0 12px var(--accent-glow); }
+.bid-title {
+  font-size: 15px; font-weight: 600; color: var(--ink-900); line-height: 1.5; margin-bottom: 12px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bid-meta { font-size: 12px; color: var(--ink-500); display: flex; gap: 12px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.bid-meta span { display: inline-flex; align-items: center; gap: 3px; }
+.bid-sub { font-size: 12px; color: var(--ink-700); display: flex; align-items: center; gap: 5px; }
 
-/* ===== 移动端（≤768px）===== */
+/* ===== 移动端（≤768px）保留原有响应式断点 ===== */
+@media (max-width: 1024px) {
+  .hero-art { opacity: 0.35; right: -80px; }
+  .hero-title { font-size: 32px; }
+}
 @media (max-width: 768px) {
-  .hero { padding: 28px 14px 24px; }
-  .hero-title { font-size: 22px; }
-  .hero-sub { font-size: 13px; margin-bottom: 20px; }
-  .filter-panel { padding: 4px 12px; }
-  .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 14px 0; padding: 16px 12px; margin-top: -12px; }
-  .stat-num { font-size: 22px; }
-  .content-section { padding: 0 14px; }
-  .section-header h2 { font-size: 17px; }
+  .hero { padding: 36px 14px 48px; }
+  .hero-art { display: none; }
+  .hero-kicker { font-size: 10px; letter-spacing: 1px; }
+  .hero-title { font-size: 25px; margin: 14px 0 10px; }
+  .hero-sub { font-size: 14px; margin-bottom: 22px; }
+  .ai-search-box :deep(.el-input__wrapper) { height: 48px; }
+  .ai-search-box :deep(.el-input-group__append .el-button) { height: 48px; font-size: 13px; }
+  .filter-panel { max-width: 100%; padding: 4px 10px; }
+  .search-switch { text-align: center; }
+  .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 4px; margin-top: -22px; padding: 6px; }
+  .stat-item { padding: 12px; gap: 10px; }
+  .stat-icon { width: 38px; height: 38px; font-size: 17px; }
+  .stat-num { font-size: 21px; }
+  .stat-index { display: none; }
+  .content-section { padding: 0 14px 8px; }
+  .section-header h2 { font-size: 18px; }
 }
 </style>

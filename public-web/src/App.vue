@@ -14,8 +14,14 @@ import SiteFooter from '@/components/SiteFooter.vue'
   </div>
 </template>
 
-<style>
-html, body, #app { height: 100%; margin: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif; background: #f5f7fa; color: #303133; }
-a { text-decoration: none; color: inherit; }
+<style scoped>
+.portal-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(1100px 520px at 50% -180px, rgba(14, 165, 233, 0.10), transparent 70%),
+    var(--surface-soft);
+}
+.portal-main { flex: 1 0 auto; }
 </style>

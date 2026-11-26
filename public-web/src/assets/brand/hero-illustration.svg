@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 480" fill="none" role="img" aria-label="标讯数据雷达">
+  <defs>
+    <linearGradient id="ring" x1="80" y1="60" x2="520" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0.15"/>
+    </linearGradient>
+    <linearGradient id="cardStroke" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#38BDF8" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#818CF8" stop-opacity="0.35"/>
+    </linearGradient>
+    <linearGradient id="scan" x1="300" y1="240" x2="300" y2="20" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#67E8F9" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0" cy="0" r="1" gradientTransform="translate(300 240) scale(70)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7DD3FC" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#0EA5E9" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- 背景同心圆网格 -->
+  <circle cx="300" cy="240" r="200" stroke="#38BDF8" stroke-opacity="0.10"/>
+  <circle cx="300" cy="240" r="150" stroke="#38BDF8" stroke-opacity="0.16"/>
+  <circle cx="300" cy="240" r="100" stroke="#38BDF8" stroke-opacity="0.22"/>
+  <circle cx="300" cy="240" r="52" stroke="#38BDF8" stroke-opacity="0.30"/>
+
+  <!-- 刻度虚线圈 -->
+  <circle cx="300" cy="240" r="176" stroke="url(#ring)" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="2 10"/>
+  <circle cx="300" cy="240" r="126" stroke="url(#ring)" stroke-opacity="0.55" stroke-width="1" stroke-dasharray="1 7"/>
+
+  <!-- 扫描扇形 -->
+  <path d="M300 240L300 40A200 200 0 0 1 441 99Z" fill="url(#scan)" opacity="0.55"/>
+  <path d="M300 240L441 99" stroke="#67E8F9" stroke-opacity="0.5" stroke-width="1.5"/>
+
+  <!-- 十字准星 -->
+  <path d="M300 8V472M68 240H532" stroke="#38BDF8" stroke-opacity="0.08"/>
+  <path d="M300 30V52M300 428V450M90 240H112M488 240H510" stroke="#38BDF8" stroke-opacity="0.35" stroke-width="1.5"/>
+
+  <!-- 数据节点 + 连线 -->
+  <path d="M300 240L172 128M300 240L436 150M300 240L452 318M300 240L170 336" stroke="#38BDF8" stroke-opacity="0.25" stroke-width="1"/>
+  <circle cx="172" cy="128" r="6" fill="#0B1B2E" stroke="#38BDF8" stroke-width="2" filter="url(#glow)"/>
+  <circle cx="436" cy="150" r="6" fill="#0B1B2E" stroke="#22D3EE" stroke-width="2" filter="url(#glow)"/>
+  <circle cx="452" cy="318" r="6" fill="#0B1B2E" stroke="#818CF8" stroke-width="2" filter="url(#glow)"/>
+  <circle cx="170" cy="336" r="6" fill="#0B1B2E" stroke="#38BDF8" stroke-width="2" filter="url(#glow)"/>
+
+  <!-- 核心光点 -->
+  <circle cx="300" cy="240" r="70" fill="url(#core)"/>
+  <circle cx="300" cy="240" r="18" stroke="#38BDF8" stroke-width="2" filter="url(#glow)"/>
+  <circle cx="300" cy="240" r="7" fill="#7DD3FC" filter="url(#glow)"/>
+
+  <!-- 悬浮标讯卡片（左上） -->
+  <g transform="translate(70 60)">
+    <rect width="150" height="62" rx="8" fill="#0D1E38" fill-opacity="0.92" stroke="url(#cardStroke)" stroke-width="1.2"/>
+    <rect x="12" y="12" width="34" height="7" rx="3.5" fill="#38BDF8" fill-opacity="0.85"/>
+    <rect x="54" y="13" width="80" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.55"/>
+    <rect x="12" y="28" width="120" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.35"/>
+    <rect x="12" y="40" width="88" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.25"/>
+    <circle cx="138" cy="46" r="3" fill="#22D3EE" filter="url(#glow)"/>
+  </g>
+
+  <!-- 悬浮标讯卡片（右下） -->
+  <g transform="translate(380 330)">
+    <rect width="158" height="66" rx="8" fill="#0D1E38" fill-opacity="0.92" stroke="url(#cardStroke)" stroke-width="1.2"/>
+    <rect x="12" y="12" width="44" height="7" rx="3.5" fill="#818CF8" fill-opacity="0.9"/>
+    <rect x="64" y="13" width="80" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.5"/>
+    <rect x="12" y="28" width="126" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.35"/>
+    <rect x="12" y="40" width="96" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.25"/>
+    <circle cx="146" cy="50" r="3" fill="#38BDF8" filter="url(#glow)"/>
+  </g>
+
+  <!-- 装饰代码点阵 -->
+  <g fill="#38BDF8" fill-opacity="0.35">
+    <circle cx="60" cy="200" r="2"/><circle cx="72" cy="200" r="2"/><circle cx="84" cy="200" r="2"/>
+    <circle cx="540" cy="250" r="2"/><circle cx="528" cy="250" r="2"/><circle cx="516" cy="250" r="2"/>
+  </g>
+</svg>

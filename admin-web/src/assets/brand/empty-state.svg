@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 220" fill="none" role="img" aria-label="空状态">
+  <defs>
+    <linearGradient id="doc" x1="70" y1="30" x2="230" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#818CF8" stop-opacity="0.5"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0" cy="0" r="1" gradientTransform="translate(150 110) scale(120)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0EA5E9" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#0EA5E9" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="g" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <circle cx="150" cy="110" r="110" fill="url(#halo)"/>
+  <circle cx="150" cy="110" r="86" stroke="#38BDF8" stroke-opacity="0.18" stroke-dasharray="2 10"/>
+  <circle cx="150" cy="110" r="104" stroke="#38BDF8" stroke-opacity="0.10"/>
+
+  <!-- 文档 -->
+  <path d="M100 46H172L200 74V178A8 8 0 0 1 192 186H100A8 8 0 0 1 92 178V54A8 8 0 0 1 100 46Z" fill="#0D1E38" stroke="url(#doc)" stroke-width="2"/>
+  <path d="M172 46V74H200" stroke="url(#doc)" stroke-width="2" stroke-linejoin="round" fill="none"/>
+  <rect x="108" y="92" width="76" height="6" rx="3" fill="#38BDF8" fill-opacity="0.6"/>
+  <rect x="108" y="110" width="76" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.35"/>
+  <rect x="108" y="126" width="56" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.25"/>
+  <rect x="108" y="142" width="68" height="5" rx="2.5" fill="#9FC5E8" fill-opacity="0.2"/>
+
+  <!-- 放大镜 -->
+  <circle cx="206" cy="146" r="30" fill="#071021" fill-opacity="0.9" stroke="#22D3EE" stroke-width="2.5" filter="url(#g)"/>
+  <circle cx="206" cy="146" r="20" stroke="#38BDF8" stroke-opacity="0.4"/>
+  <path d="M228 168L248 188" stroke="#22D3EE" stroke-width="4" stroke-linecap="round"/>
+  <path d="M194 146L202 154L218 138" stroke="#67E8F9" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+
+  <!-- 点缀 -->
+  <circle cx="62" cy="70" r="3" fill="#38BDF8" opacity="0.5"/>
+  <circle cx="246" cy="52" r="2.5" fill="#818CF8" opacity="0.6"/>
+  <circle cx="54" cy="160" r="2" fill="#22D3EE" opacity="0.5"/>
+</svg>

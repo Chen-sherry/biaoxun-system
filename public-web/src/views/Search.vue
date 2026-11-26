@@ -1,12 +1,18 @@
 <template>
   <div class="search-page">
-    <div class="search-bar">
+    <div class="page-head">
+      <span class="section-kicker">ADVANCED SEARCH</span>
+      <h1>高级检索</h1>
+      <p>多条件精确筛选，快速定位目标标讯</p>
+    </div>
+
+    <div class="search-bar tech-card">
       <el-input v-model="keyword" size="large" placeholder="输入关键词..." @keyup.enter="loadData" clearable>
         <template #append><el-button :icon="Search" type="primary" @click="loadData">搜索</el-button></template>
       </el-input>
     </div>
 
-    <div class="filter-row">
+    <div class="filter-row tech-card">
       <el-form :inline="true" :model="filter">
         <el-form-item label="公告类型">
           <el-select v-model="filter.notice_type_id" clearable placeholder="全部" style="width:140px">
@@ -37,21 +43,29 @@
     </div>
 
     <div class="result-bar">
-      共 <b>{{ total }}</b> 条标讯
+      <el-icon><DataLine /></el-icon> 共 <b>{{ total }}</b> 条标讯
     </div>
 
     <div v-loading="loading" class="result-list">
-      <div v-for="b in list" :key="b.id" class="result-item" @click="$router.push(`/bid/${b.id}`)">
-        <h3 class="result-title">{{ b.title }}</h3>
-        <div class="result-meta">
-          <el-tag v-if="b.notice_type" size="small" type="success">{{ b.notice_type }}</el-tag>
-          <span>{{ formatTime(b.publish_time) }}</span>
-          <span v-if="b.region_name">· {{ b.region_name }}</span>
-          <span>· 👁 {{ b.view_count }}</span>
+      <div v-for="b in list" :key="b.id" class="result-item tech-card" @click="$router.push(`/bid/${b.id}`)">
+        <div class="result-accent"></div>
+        <div class="result-main">
+          <h3 class="result-title">{{ b.title }}</h3>
+          <div class="result-meta">
+            <el-tag v-if="b.notice_type" size="small" type="primary" effect="dark">{{ b.notice_type }}</el-tag>
+            <span><el-icon><Calendar /></el-icon> {{ formatTime(b.publish_time) }}</span>
+            <span v-if="b.region_name"><el-icon><Location /></el-icon> {{ b.region_name }}</span>
+            <span><el-icon><View /></el-icon> {{ b.view_count }}</span>
+          </div>
+          <div v-if="b.tenderee" class="result-sub">
+            <el-icon><OfficeBuilding /></el-icon> 采购人：{{ b.tenderee }}
+            <template v-if="b.winner_unit"> · 中标单位：{{ b.winner_unit }}</template>
+            <template v-if="b.win_amount"> · 中标金额：<b class="amount">¥{{ b.win_amount?.toLocaleString() }}</b></template>
+          </div>
         </div>
-        <div v-if="b.tenderee" class="result-sub">采购人：{{ b.tenderee }} <span v-if="b.winner_unit">| 中标单位：{{ b.winner_unit }}</span> <span v-if="b.win_amount">| 中标金额：¥{{ b.win_amount?.toLocaleString() }}</span></div>
+        <el-icon class="result-arrow"><Right /></el-icon>
       </div>
-      <el-empty v-if="!loading && list.length === 0" description="暂无匹配的标讯" />
+      <el-empty v-if="!loading && list.length === 0" description="暂无匹配的标讯" :image="emptyArt" :image-size="180" />
     </div>
 
     <div class="pagination-wrap">
@@ -63,7 +77,8 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Search } from '@element-plus/icons-vue'
+import { Search, DataLine, Calendar, Location, View, OfficeBuilding, Right } from '@element-plus/icons-vue'
+import emptyArt from '@/assets/brand/empty-state.svg'
 import { fetchPublicBids, fetchPublicNoticeTypes } from '@/api'
 
 const route = useRoute()
@@ -135,20 +150,48 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.search-page { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
-.search-bar { max-width: 700px; margin: 0 auto 16px; }
-.filter-row { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
-.result-bar { color: #909399; font-size: 13px; margin-bottom: 12px; }
-.result-item { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 12px; cursor: pointer; transition: all .2s; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
-.result-item:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); transform: translateY(-1px); }
-.result-title { margin: 0 0 10px; font-size: 16px; color: #303133; line-height: 1.5; }
-.result-meta { display: flex; gap: 8px; align-items: center; color: #909399; font-size: 13px; flex-wrap: wrap; }
-.result-sub { margin-top: 6px; color: #606266; font-size: 13px; }
-.pagination-wrap { display: flex; justify-content: center; margin-top: 24px; }
+.search-page { max-width: 1200px; margin: 28px auto; padding: 0 24px 20px; }
+.page-head { margin-bottom: 22px; }
+.page-head h1 { font-size: 28px; font-weight: 800; color: var(--ink-900); margin: 8px 0 4px; }
+.page-head p { color: var(--ink-500); font-size: 14px; }
+.search-bar { max-width: 720px; margin: 0 auto 16px; padding: 8px; }
+.filter-row { padding: 16px; margin-bottom: 16px; }
+.result-bar {
+  color: var(--ink-500); font-size: 13px; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 7px;
+}
+.result-bar :deep(.el-icon) { color: var(--accent-strong); }
+.result-bar b { color: var(--accent-deep); font-size: 16px; }
+.result-list { display: flex; flex-direction: column; gap: 12px; }
+.result-item {
+  position: relative; padding: 18px 22px; cursor: pointer;
+  display: flex; align-items: center; gap: 16px; overflow: hidden;
+}
+.result-accent {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(var(--accent), var(--accent-cyan));
+  transform: scaleY(0); transition: transform 0.35s var(--ease);
+}
+.result-item:hover .result-accent { transform: scaleY(1); }
+.result-item:hover { border-color: var(--accent-line); }
+.result-main { flex: 1; min-width: 0; }
+.result-title {
+  margin: 0 0 10px; font-size: 16px; font-weight: 600; color: var(--ink-900); line-height: 1.5;
+  transition: color 0.25s;
+}
+.result-item:hover .result-title { color: var(--accent-deep); }
+.result-meta { display: flex; gap: 14px; align-items: center; color: var(--ink-500); font-size: 13px; flex-wrap: wrap; }
+.result-meta span { display: inline-flex; align-items: center; gap: 4px; }
+.result-sub { margin-top: 8px; color: var(--ink-700); font-size: 13px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.result-sub .amount { color: var(--danger); font-weight: 700; }
+.result-arrow { color: var(--line-strong); font-size: 18px; flex: none; transition: all 0.3s var(--ease); }
+.result-item:hover .result-arrow { color: var(--accent); transform: translateX(3px); }
+.pagination-wrap { display: flex; justify-content: center; margin-top: 26px; }
 
-/* ===== 移动端（≤768px）：筛选表单竖排 ===== */
+/* ===== 移动端（≤768px）：筛选表单竖排，保留原逻辑 ===== */
 @media (max-width: 768px) {
-  .search-page { margin: 14px auto; padding: 0 12px; }
+  .search-page { margin: 16px auto; padding: 0 12px 16px; }
+  .page-head h1 { font-size: 22px; }
   .filter-row { padding: 12px; }
   .filter-row :deep(.el-form--inline) { display: flex; flex-direction: column; }
   .filter-row :deep(.el-form--inline .el-form-item) { display: flex; width: 100%; margin: 0 0 10px; }
@@ -157,8 +200,9 @@ onMounted(async () => {
   .filter-row :deep(.el-input),
   .filter-row :deep(.el-select),
   .filter-row :deep(.el-date-editor) { width: 100% !important; }
-  .result-title { font-size: 15px; }
   .result-item { padding: 14px; }
+  .result-title { font-size: 15px; }
+  .result-arrow { display: none; }
   .pagination-wrap :deep(.el-pagination) { flex-wrap: wrap; justify-content: center; row-gap: 8px; }
 }
 </style>
