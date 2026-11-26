@@ -25,6 +25,7 @@ interface AIItem {
   snippet?: string
 }
 const items = ref<AIItem[]>([])   // 全量打分结果（降序，后端一次返回）
+const totalHits = ref<number | null>(null)   // 关键词全量命中数（后端 total_hits，真实总数）
 const fallbackUsed = ref(false)   // 最高分 <60，兜底展示
 
 // 转译结果 / 检索诊断（chips、放宽提示、空结果诊断态）
@@ -63,6 +64,13 @@ function initBand() {
 
 const highCount = computed(() => items.value.filter(i => i.score >= 75).length)
 const midCount = computed(() => items.value.filter(i => i.score >= 60 && i.score < 75).length)
+
+// 真实总数：全量命中数 > 打分池时顶部显示「共 N 条 · AI 已精排前 M 条」，
+// 否则维持原显示（totalHits 为空/命中数不超打分池时不加噪音）
+const totalCount = computed(() =>
+  totalHits.value && totalHits.value > items.value.length ? totalHits.value : items.value.length)
+const rankedCount = computed(() =>
+  totalHits.value && totalHits.value > items.value.length ? items.value.length : 0)
 
 // 分档分隔线：可见列表中跨过档位边界时插入说明
 function bandDivider(index: number): string | null {
@@ -123,6 +131,7 @@ async function doAiSearch() {
   loading.value = true
   hasSearched.value = false
   items.value = []
+  totalHits.value = null
   translated.value = null
   diagnostics.value = null
   dateRelaxed.value = false
@@ -140,6 +149,7 @@ async function doAiSearch() {
     if (res.data.code === 0) {
       const data = res.data.data || {}
       items.value = data.items || []
+      totalHits.value = typeof data.total_hits === 'number' ? data.total_hits : null
       translated.value = data.translated || null
       diagnostics.value = data.diagnostics || null
       dateRelaxed.value = !!data.date_relaxed
@@ -240,7 +250,7 @@ onMounted(async () => {
         <div v-else-if="items.length > 0" class="results">
           <div class="result-meta">
             <el-icon><DataLine /></el-icon>
-            共 {{ items.length }} 条（高相关 {{ highCount }} · 辅助 {{ midCount }}）<template v-if="hiddenCount > 0"> · 已显示 {{ visibleItems.length }} 条</template>
+            共 {{ totalCount }} 条<template v-if="rankedCount > 0"> · AI 已精排前 {{ rankedCount }} 条</template>（高相关 {{ highCount }} · 辅助 {{ midCount }}）<template v-if="hiddenCount > 0"> · 已显示 {{ visibleItems.length }} 条</template>
           </div>
 
           <!-- AI 识别出的检索条件 -->
@@ -297,7 +307,7 @@ onMounted(async () => {
               加载更多（还有 {{ hiddenCount }} 条 {{ nextBand >= 0 ? `${nextBand} 分以上` : '' }}的结果）
             </el-button>
           </div>
-          <div v-else class="load-end">已经到底了 · 共 {{ items.length }} 条结果</div>
+          <div v-else class="load-end">已经到底了 · 已展示 {{ items.length }} 条精排结果</div>
         </div>
 
         <!-- 空状态（带诊断信息） -->

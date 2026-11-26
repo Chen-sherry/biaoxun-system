@@ -615,6 +615,46 @@ def _apply_budget_filter(cond: Dict[str, Any],
 #  主流程
 # ---------------------------------------------------------------- #
 
+def _count_total(cond: Dict[str, Any]) -> Optional[int]:
+    """关键词全量命中数（status=1，不限 LIMIT、不带地区/日期/类型收紧）。
+
+    供前端展示「库里共 N 条含该关键词的标讯，AI 已精排前 M 条」——
+    召回层每层 LIMIT CANDIDATE_LIMIT，打分池只是命中集的头部。
+    FT 优先（与召回同索引同口径），短词/索引缺失退 LIKE；
+    无关键词（纯最新兜底）返回 None，前端不显示该片段。"""
+    keywords = cond.get("keywords") or []
+    if not keywords:
+        return None
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        cols = _ft_columns()
+        expr: Optional[str] = None
+        if cols:
+            expr, _ = build_ft_query(keywords, "or")
+        if cols and expr:
+            mc = ", ".join(f"`{c}`" for c in cols)
+            sql = text(
+                f"SELECT COUNT(*) FROM bid_info WHERE status = 1 AND "
+                f"MATCH({mc}) AGAINST(:ft IN BOOLEAN MODE) > 0")
+            params: Dict[str, Any] = {"ft": expr}
+        else:
+            likes = " OR ".join(
+                f"(b.title LIKE :kw{i} OR b.content_text LIKE :kw{i})"
+                for i in range(len(keywords)))
+            sql = text(
+                f"SELECT COUNT(*) FROM bid_info b WHERE b.status = 1 "
+                f"AND ({likes})")
+            params = {f"kw{i}": f"%{kw}%"
+                      for i, kw in enumerate(keywords)}
+        return int(db.execute(sql, params).scalar() or 0)
+    except Exception:
+        logger.warning("[ai_search] total_hits 全量统计失败", exc_info=True)
+        return None
+    finally:
+        db.close()
+
+
 def ai_search(query: str, limit: int = 120) -> Dict[str, Any]:
     """一次完整 AI 检索：转译 → 召回 → 预算过滤 → 打分 → 分档。
 
@@ -642,6 +682,7 @@ def ai_search(query: str, limit: int = 120) -> Dict[str, Any]:
     high_count = sum(1 for s in items_out if s["score"] >= HIGH_SCORE)
     mid_count = sum(1 for s in items_out if MID_SCORE <= s["score"] < HIGH_SCORE)
     lib_range, _ = _lib_date_note()
+    total_hits = _count_total(cond)   # 关键词全量命中数（前端显示真实总数）
 
     return {
         "items": items_out,
@@ -649,6 +690,7 @@ def ai_search(query: str, limit: int = 120) -> Dict[str, Any]:
         "date_relaxed": date_relaxed,
         "candidate_count": len(candidates),
         "passed_count": len(items_out),
+        "total_hits": total_hits,
         "cost_ms": int((time.time() - t0) * 1000),
         "high_count": high_count,
         "mid_count": mid_count,
