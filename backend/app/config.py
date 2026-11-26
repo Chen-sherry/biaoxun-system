@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     llm_max_retries: int = 1   # LLM 可重试错误（timeout/429/5xx）的重试次数
 
+    # ===== 爬虫出口代理 =====
+    ccgp_proxy: str = ""  # ccgp.gov.cn 专用代理（服务器 IP 被封 403 时配置，如 http://user:pass@host:port；留空直连）
+
     # ===== CORS =====
     cors_origins: str = "*"
 

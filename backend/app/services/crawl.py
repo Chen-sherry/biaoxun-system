@@ -32,12 +32,13 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
 import httpx
 from bs4 import BeautifulSoup
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.bid import BidInfo, BidSource
 from app.services.data_clean import (
@@ -60,8 +61,8 @@ DEFAULT_HEADERS = {
 
 # 详情页抓取限速：单轮最多抓多少条详情（超限的下一轮自动补）
 MAX_DETAIL_PER_RUN = 60
-DETAIL_SLEEP = 0.3      # 详情页间隔（秒）
-LIST_SLEEP = 1.0        # 列表页间隔（秒）
+DETAIL_SLEEP = 0.5      # 详情页间隔（秒）（2026-11 降频：放缓抓取速率）
+LIST_SLEEP = 2.0        # 列表页间隔（秒）
 
 
 # =====================================================
@@ -89,7 +90,8 @@ SOURCE_CCGP = {
     "list_url": "http://www.ccgp.gov.cn/cggg/zygg/gkzb/index_{page}.htm",
     "detail_url_prefix": "http://www.ccgp.gov.cn",
     "field_rules": {},
-    "interval_minutes": 60,
+    # 2026-11 降频：ccgp 封过服务器 IP，解封后维持低频（真正生效的是 bid_source.interval_minutes）
+    "interval_minutes": 180,
 }
 
 # ccgp 静态列表页分类（2026-11 实测 12 个目录 index_1.htm 全部 200/20 条）
@@ -121,9 +123,19 @@ def _dedup_key(source_code: str, external_id: str, title: str) -> str:
 
 
 def _fetch_url(url: str, timeout: float = 15.0, retries: int = 2) -> Optional[str]:
+    # ccgp 封了服务器出口 IP（403）：配置 CCGP_PROXY 后仅 ccgp 请求走代理，其余源直连
+    proxy = None
+    if "ccgp.gov.cn" in url:
+        proxy = (getattr(settings, "ccgp_proxy", "") or "").strip() or None
+        if proxy and not getattr(_fetch_url, "_proxy_logged", False):
+            logger.info(f"[crawl] ccgp 走代理出口: {proxy.split('@')[-1]}")
+            _fetch_url._proxy_logged = True
     for attempt in range(retries + 1):
         try:
-            with httpx.Client(timeout=timeout, headers=DEFAULT_HEADERS, follow_redirects=True) as client:
+            kw = dict(timeout=timeout, headers=DEFAULT_HEADERS, follow_redirects=True)
+            if proxy:
+                kw["proxy"] = proxy
+            with httpx.Client(**kw) as client:
                 r = client.get(url)
                 r.raise_for_status()
                 # 先尝试 utf-8，不行用 gbk
@@ -792,6 +804,14 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
 
         db.commit()
 
+        # 记录采集时间，供 crawl_all_registered_sources 按 interval_minutes 降频跳过
+        try:
+            db.query(BidSource).filter(BidSource.id == source_id).update(
+                {"last_crawl_at": datetime.now()})
+            db.commit()
+        except Exception:
+            logger.warning("[crawl] 更新 last_crawl_at 失败", exc_info=True)
+
         logger.info(
             f"[crawl] {code}: fetched={stats['fetched']} saved={stats['saved']} "
             f"updated={stats['updated']} skipped={stats['skipped']} details={stats['details']}"
@@ -814,11 +834,44 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
         db.close()
 
 
+def _due_to_crawl(code: str) -> bool:
+    """采集放行判断：
+    - bid_source.status=0 → 停用（如 ccgp 被封禁期间），直接跳过
+    - 按 last_crawl_at + interval_minutes 降频，未到点跳过
+    - 无记录或查询失败一律放行（首次抓取、异常不阻断）"""
+    db = SessionLocal()
+    try:
+        src = db.query(BidSource).filter(BidSource.code == code).first()
+        if not src:
+            return True
+        if not src.status:
+            logger.info(f"[crawl] source={code} 已停用（bid_source.status=0），跳过")
+            return False
+        if not src.last_crawl_at:
+            return True
+        due = datetime.now() - src.last_crawl_at >= timedelta(
+            minutes=src.interval_minutes or 60)
+        if not due:
+            logger.info(f"[crawl] source={code} 未到采集间隔"
+                        f"（{src.interval_minutes} 分钟），跳过")
+        return due
+    except Exception:
+        return True
+    finally:
+        db.close()
+
+
 def crawl_all_registered_sources(pages_per_source: int = 1) -> List[Dict[str, Any]]:
-    """采集所有已注册的爬虫源（code in {ggzy, ccgp}）"""
+    """采集所有已注册的爬虫源（code in {ggzy, ccgp}）；
+    status=0 停用、按 bid_source.interval_minutes 降频
+    （ccgp 180 分钟、ggzy 120 分钟一次）"""
     results = []
     for code in ("ggzy", "ccgp"):
         try:
+            if not _due_to_crawl(code):
+                results.append({"source": code, "status": "skipped",
+                                "message": "disabled or interval not due"})
+                continue
             results.append(crawl_and_save(code, pages=pages_per_source))
         except Exception as e:
             logger.exception(f"[crawl] source={code} fatal: {e}")
