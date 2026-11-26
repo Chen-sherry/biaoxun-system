@@ -14,8 +14,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-import httpx
-
 from app.config import settings
 from app.database import SessionLocal
 from app.models.bid import BidInfo
@@ -105,29 +103,15 @@ async def ai_chat(
 
     final_messages.extend(messages)
 
-    url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.deepseek_model,
-        "messages": final_messages,
-        "temperature": 0.6,
-        "max_tokens": 1500,
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            r.raise_for_status()
-            data = r.json()
-            content = data["choices"][0]["message"]["content"]
-            logger.info(f"[ai-chat] tokens used: {data.get('usage', {})}")
-            return content
-    except httpx.HTTPStatusError as e:
-        logger.error(f"[ai-chat] HTTP error: {e.response.status_code} {e.response.text[:200]}")
-        return f"⚠️ AI 服务返回错误：HTTP {e.response.status_code}"
+        from app.services.llm import achat, LLMError
+        result = await achat(final_messages, temperature=0.6, max_tokens=1500,
+                             timeout=30.0, tag="chat")
+        logger.info(f"[ai-chat] tokens used: {result.usage}")
+        return result.content
+    except LLMError as e:
+        logger.error(f"[ai-chat] LLM error kind={e.kind}: {e}")
+        return f"⚠️ AI 服务返回错误：{str(e)[:80]}"
     except Exception as e:
         logger.exception(f"[ai-chat] failed: {e}")
         return f"⚠️ AI 服务暂时不可用：{str(e)[:80]}"

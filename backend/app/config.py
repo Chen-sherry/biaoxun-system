@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
+    llm_max_retries: int = 1   # LLM 可重试错误（timeout/429/5xx）的重试次数
 
     # ===== CORS =====
     cors_origins: str = "*"

@@ -17,8 +17,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-import httpx
-
 from app.config import settings
 from app.database import SessionLocal
 from app.models.bid import BidInfo
@@ -132,83 +130,70 @@ async def generate_push(messages: List[dict]) -> dict:
             "cited_bid_ids": [], "candidates": [], "searched": 0, "full": False,
         }
 
-    url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
-        "Content-Type": "application/json",
-    }
     final_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages[-16:]
 
     candidates: list = []   # 本次会话检索到的标讯 id（按出现顺序去重）
     searched = 0
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # 最多 4 轮工具调用，防止死循环
-            for _ in range(4):
-                payload = {
-                    "model": settings.deepseek_model,
-                    "messages": final_messages,
-                    "tools": TOOLS,
-                    "temperature": 0.5,
-                    "max_tokens": 3000,
+        from app.services.llm import achat, LLMError
+        # 最多 4 轮工具调用，防止死循环
+        for _ in range(4):
+            result = await achat(final_messages, tools=TOOLS, temperature=0.5,
+                                 max_tokens=3000, timeout=60.0, tag="push")
+            msg = {"content": result.content, "tool_calls": result.tool_calls}
+
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                reply = (msg.get("content") or "").strip()
+                return {
+                    "reply": reply or "（AI 未返回内容，请重试）",
+                    "cited_bid_ids": collect_cited_ids(reply, candidates),
+                    "candidates": candidates,
+                    "searched": searched,
+                    "full": True,
                 }
-                r = await client.post(url, headers=headers, json=payload)
-                r.raise_for_status()
-                data = r.json()
-                msg = data["choices"][0]["message"]
 
-                tool_calls = msg.get("tool_calls") or []
-                if not tool_calls:
-                    reply = (msg.get("content") or "").strip()
-                    return {
-                        "reply": reply or "（AI 未返回内容，请重试）",
-                        "cited_bid_ids": collect_cited_ids(reply, candidates),
-                        "candidates": candidates,
-                        "searched": searched,
-                        "full": True,
-                    }
-
-                # 追加 assistant(tool_calls) 再逐个执行
+            # 追加 assistant(tool_calls) 再逐个执行
+            final_messages.append({
+                "role": "assistant",
+                "content": msg.get("content"),
+                "tool_calls": tool_calls,
+            })
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                if fn.get("name") == "search_bids":
+                    results = _search_bids(
+                        keyword=args.get("keyword", ""),
+                        days=args.get("days", 7),
+                        region_code=args.get("region_code"),
+                        notice_type=args.get("notice_type"),
+                    )
+                    searched += 1
+                    for b in results:
+                        if b["id"] not in candidates:
+                            candidates.append(b["id"])
+                else:
+                    results = {"error": f"unknown tool {fn.get('name')}"}
                 final_messages.append({
-                    "role": "assistant",
-                    "content": msg.get("content"),
-                    "tool_calls": tool_calls,
+                    "role": "tool",
+                    "tool_call_id": tc.get("id"),
+                    "content": json.dumps(results, ensure_ascii=False),
                 })
-                for tc in tool_calls:
-                    fn = tc.get("function", {})
-                    try:
-                        args = json.loads(fn.get("arguments") or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
-                    if fn.get("name") == "search_bids":
-                        results = _search_bids(
-                            keyword=args.get("keyword", ""),
-                            days=args.get("days", 7),
-                            region_code=args.get("region_code"),
-                            notice_type=args.get("notice_type"),
-                        )
-                        searched += 1
-                        for b in results:
-                            if b["id"] not in candidates:
-                                candidates.append(b["id"])
-                    else:
-                        results = {"error": f"unknown tool {fn.get('name')}"}
-                    final_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.get("id"),
-                        "content": json.dumps(results, ensure_ascii=False),
-                    })
 
-            # 4 轮仍未收敛
-            return {
-                "reply": "⚠️ AI 调用轮次过多，请简化需求后重试。",
-                "cited_bid_ids": [], "candidates": candidates,
-                "searched": searched, "full": False,
-            }
-    except httpx.HTTPStatusError as e:
-        logger.error(f"[ai-push] HTTP {e.response.status_code}: {e.response.text[:200]}")
-        return {"reply": f"⚠️ AI 服务返回错误：HTTP {e.response.status_code}",
+        # 4 轮仍未收敛
+        return {
+            "reply": "⚠️ AI 调用轮次过多，请简化需求后重试。",
+            "cited_bid_ids": [], "candidates": candidates,
+            "searched": searched, "full": False,
+        }
+    except LLMError as e:
+        logger.error(f"[ai-push] LLM error kind={e.kind}: {e}")
+        return {"reply": f"⚠️ AI 服务返回错误：{str(e)[:80]}",
                 "cited_bid_ids": [], "candidates": candidates,
                 "searched": searched, "full": False}
     except Exception as e:

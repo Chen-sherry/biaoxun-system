@@ -8,13 +8,9 @@ DeepSeek AI 智能匹配服务
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 from datetime import datetime, timedelta
 from typing import List, Optional
-
-import httpx
 
 from app.config import settings
 from app.database import SessionLocal
@@ -54,43 +50,25 @@ async def deepseek_match(
         logger.warning("[ai-match] DEEPSEEK_API_KEY 未配置，走本地降级")
         return _fallback_keyword_score(keywords, bids_sample, limit)
 
-    url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.deepseek_model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _build_prompt(keywords, bids_sample)},
-        ],
-        "temperature": 0.3,
-        "max_tokens": 4000,
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            r.raise_for_status()
-            data = r.json()
-            content = data["choices"][0]["message"]["content"]
-            # 从返回里摘 JSON：先尝试直接 parse，再尝试正则
-            parsed = None
-            try:
-                parsed = json.loads(content.strip())
-            except (json.JSONDecodeError, ValueError):
-                json_match = re.search(r"\[.*\]", content, re.DOTALL)
-                if json_match:
-                    try:
-                        parsed = json.loads(json_match.group())
-                    except Exception:
-                        parsed = None
-            if parsed and isinstance(parsed, list):
-                parsed.sort(key=lambda x: -x.get("score", 0))
-                return parsed[:limit]
-            logger.warning(f"[ai-match] DeepSeek 返回无法解析: {content[:200]}")
-            return _fallback_keyword_score(keywords, bids_sample, limit)
+        from app.services.llm import achat_json, LLMError
+        parsed = await achat_json(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": _build_prompt(keywords, bids_sample)},
+            ],
+            expect="array",
+            temperature=0.3,
+            max_tokens=4000,
+            timeout=30.0,
+            json_mode=False,
+            tag="match",
+        )
+        if parsed and isinstance(parsed, list):
+            parsed.sort(key=lambda x: -x.get("score", 0))
+            return parsed[:limit]
+        logger.warning("[ai-match] DeepSeek 返回非数组")
+        return _fallback_keyword_score(keywords, bids_sample, limit)
     except Exception as e:
         logger.exception(f"[ai-match] DeepSeek 调用失败: {e}")
         return _fallback_keyword_score(keywords, bids_sample, limit)
