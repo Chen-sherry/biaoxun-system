@@ -24,16 +24,58 @@ interface AIItem {
   notice_type?: string
   snippet?: string
 }
-const items = ref<AIItem[]>([])
+const items = ref<AIItem[]>([])   // 全量打分结果（降序，后端一次返回）
+const fallbackUsed = ref(false)   // 最高分 <60，兜底展示
 
 // 转译结果 / 检索诊断（chips、放宽提示、空结果诊断态）
 const translated = ref<any>(null)
 const diagnostics = ref<any>(null)
 const dateRelaxed = ref(false)
 
-const MID = 60
-// 首条辅助分数（60~74）的下标：用于在它前面插入分档分隔线
-const firstMidIndex = computed(() => items.value.findIndex(i => i.score < 75))
+// ===== 分档渐进展示：默认 75+，每点一次加载更多降一档（60→40→20→0） =====
+const BANDS = [75, 60, 40, 20, 0]
+const minScore = ref(75)
+
+const visibleItems = computed(() => items.value.filter(i => i.score >= minScore.value))
+const hiddenCount = computed(() => items.value.length - visibleItems.value.length)
+const allShown = computed(() => hiddenCount.value === 0)
+
+// 下一档阈值（跳过没有新增条目的空档）
+const nextBand = computed(() => {
+  const cur = minScore.value
+  for (const b of BANDS) {
+    if (b < cur && items.value.some(i => i.score >= b && i.score < cur)) return b
+  }
+  return -1   // 没有更低档可加载
+})
+
+function loadMore() {
+  const nb = nextBand.value
+  if (nb >= 0) minScore.value = nb
+}
+
+// 初始档位：没有 75+ 时从 60 起步；连 60 都没有（兜底）则直接全量显示
+function initBand() {
+  if (items.value.some(i => i.score >= 75)) minScore.value = 75
+  else if (items.value.some(i => i.score >= 60)) minScore.value = 60
+  else minScore.value = 0
+}
+
+const highCount = computed(() => items.value.filter(i => i.score >= 75).length)
+const midCount = computed(() => items.value.filter(i => i.score >= 60 && i.score < 75).length)
+
+// 分档分隔线：可见列表中跨过档位边界时插入说明
+function bandDivider(index: number): string | null {
+  const list = visibleItems.value
+  const cur = list[index]
+  const prev = index > 0 ? list[index - 1] : null
+  if (!prev || !cur) return null
+  if (prev.score >= 75 && cur.score < 75) return '以下为辅助推荐（60~74 分，可能不完全匹配）'
+  if (prev.score >= 60 && cur.score < 60) return '以下为一般相关（40~59 分，仅供参考）'
+  if (prev.score >= 40 && cur.score < 40) return '以下为弱相关（20~39 分，谨慎参考）'
+  if (prev.score >= 20 && cur.score < 20) return '以下为低相关（低于 20 分，兜底参考）'
+  return null
+}
 
 const conditionChips = computed(() => {
   const t = translated.value
@@ -84,10 +126,12 @@ async function doAiSearch() {
   translated.value = null
   diagnostics.value = null
   dateRelaxed.value = false
+  fallbackUsed.value = false
+  minScore.value = 75
   try {
     const token = localStorage.getItem('token')
     const res = await axios.post(`${import.meta.env.VITE_API_BASE || ''}/api/v1/ai/search`,
-      { query: q, limit: 20 },
+      { query: q, limit: 120 },
       {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         timeout: 120000,
@@ -99,6 +143,8 @@ async function doAiSearch() {
       translated.value = data.translated || null
       diagnostics.value = data.diagnostics || null
       dateRelaxed.value = !!data.date_relaxed
+      fallbackUsed.value = !!data.fallback_used
+      initBand()   // 按结果分布定初始档位
       if (items.value.length === 0) {
         ElMessage.info('没有找到达到展示分数的相关标讯，换个说法试试')
       }
@@ -160,7 +206,7 @@ onMounted(async () => {
       <div class="page-head">
         <span class="section-kicker">AI SEMANTIC SEARCH</span>
         <h1>智能检索</h1>
-        <p>描述需求 → AI 转译 → 全文检索 + 语义评分，75+ 高相关、60~74 辅助展示</p>
+        <p>描述需求 → AI 转译 → 全文检索 + 语义评分，默认展示 75+ 高相关，点「加载更多」逐档放宽</p>
       </div>
 
       <el-card shadow="never" class="main-card tech-card">
@@ -180,7 +226,7 @@ onMounted(async () => {
               </el-button>
             </template>
           </el-input>
-          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 75 分以上高度相关，60~74 分辅助展示</div>
+          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 默认展示 75 分以上高相关，加载更多逐档查看其余结果</div>
         </div>
 
         <!-- 加载中 -->
@@ -192,7 +238,10 @@ onMounted(async () => {
 
         <!-- 结果列表 -->
         <div v-else-if="items.length > 0" class="results">
-          <div class="result-meta"><el-icon><DataLine /></el-icon> 共 {{ items.length }} 条（高相关 {{ items.filter(i => i.score >= 75).length }} · 辅助 {{ items.filter(i => i.score < 75).length }}）</div>
+          <div class="result-meta">
+            <el-icon><DataLine /></el-icon>
+            共 {{ items.length }} 条（高相关 {{ highCount }} · 辅助 {{ midCount }}）<template v-if="hiddenCount > 0"> · 已显示 {{ visibleItems.length }} 条</template>
+          </div>
 
           <!-- AI 识别出的检索条件 -->
           <div v-if="conditionChips.length" class="condition-chips">
@@ -200,27 +249,32 @@ onMounted(async () => {
             <el-tag v-for="(c, i) in conditionChips" :key="i" size="small" effect="plain">{{ c }}</el-tag>
           </div>
           <el-alert
+            v-if="fallbackUsed"
+            title="没有达到 60 分的结果，以下为最接近的兜底推荐"
+            type="warning" :closable="false" show-icon class="relax-alert"
+          />
+          <el-alert
             v-if="dateRelaxed"
             title="知识库中该时间段没有命中结果，已自动放宽时间条件，以下结果按相关性排序"
             type="info" :closable="false" show-icon class="relax-alert"
           />
           <div v-if="diagnostics" class="diag-line">召回：{{ diagModeText }} · 候选 {{ diagnostics.candidate_count }} 条{{ diagnostics.budget_dropped ? ` · 预算外剔除 ${diagnostics.budget_dropped} 条` : '' }}</div>
 
-          <template v-for="(item, index) in items" :key="item.id">
-            <!-- 分档分隔线：进入 60~74 辅助段时插入 -->
-            <div v-if="index === firstMidIndex" class="tier-divider">
-              <span class="tier-divider-text">以下为辅助推荐（60~74 分，可能不完全匹配）</span>
+          <template v-for="(item, index) in visibleItems" :key="item.id">
+            <!-- 分档分隔线：跨过档位边界时插入 -->
+            <div v-if="bandDivider(index)" class="tier-divider">
+              <span class="tier-divider-text">{{ bandDivider(index) }}</span>
             </div>
             <div class="result-card" @click="viewDetail(item.id)">
-              <div class="score-badge" :class="{ mid: item.score < 75 }">
+              <div class="score-badge" :class="{ mid: item.score < 75, low: item.score < 60 }">
                 <div class="score-num">{{ item.score }}</div>
                 <div class="score-label">AI 评分</div>
               </div>
               <div class="result-main">
                 <div class="result-title">{{ item.title }}</div>
                 <div class="result-reason">
-                  <el-tag size="small" :type="item.score >= 75 ? 'success' : 'info'" effect="dark">
-                    {{ item.score >= 75 ? '高相关' : '相关推荐' }}
+                  <el-tag size="small" :type="item.score >= 75 ? 'success' : item.score >= 60 ? 'info' : 'warning'" effect="dark">
+                    {{ item.score >= 75 ? '高相关' : item.score >= 60 ? '辅助推荐' : '兜底参考' }}
                   </el-tag>
                   <span class="reason-text">{{ item.reason }}</span>
                 </div>
@@ -236,6 +290,14 @@ onMounted(async () => {
               <el-icon class="result-arrow"><ArrowRight /></el-icon>
             </div>
           </template>
+
+          <!-- 加载更多：按 20 分一档逐级放宽；全部显示后提示到底 -->
+          <div v-if="!allShown" class="load-more">
+            <el-button plain type="primary" @click="loadMore">
+              加载更多（还有 {{ hiddenCount }} 条 {{ nextBand >= 0 ? `${nextBand} 分以上` : '' }}的结果）
+            </el-button>
+          </div>
+          <div v-else class="load-end">已经到底了 · 共 {{ items.length }} 条结果</div>
         </div>
 
         <!-- 空状态（带诊断信息） -->
@@ -359,6 +421,23 @@ onMounted(async () => {
   border-color: var(--line);
 }
 .score-badge.mid .score-num { color: var(--ink-600, var(--ink-500)); }
+.score-badge.low {
+  background: rgba(234, 179, 8, 0.08);
+  border-color: rgba(234, 179, 8, 0.35);
+}
+.score-badge.low .score-num { color: #b45309; }
+
+/* ===== 分档渐进展示：加载更多 / 到底了 ===== */
+.load-more { text-align: center; padding: 10px 0 4px; }
+.load-more :deep(.el-button) { min-width: 260px; font-size: 13px; }
+.load-end {
+  text-align: center; padding: 14px 0 6px;
+  font-size: 13px; color: var(--ink-400);
+}
+.load-end::before, .load-end::after {
+  content: ''; display: inline-block; width: 56px; height: 1px;
+  background: var(--line); vertical-align: middle; margin: 0 12px;
+}
 .result-snippet {
   font-size: 12px; color: var(--ink-500); line-height: 1.6; margin-bottom: 10px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
