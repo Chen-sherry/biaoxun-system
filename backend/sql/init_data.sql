@@ -189,7 +189,8 @@ CREATE TABLE `bid_info` (
     KEY `idx_bid_winner_publish` (`winner_publish_time`),
     KEY `idx_bid_customer_group` (`customer_group`),
     KEY `idx_project_code` (`project_code`),
-    KEY `idx_dedup` (`dedup_key`)
+    KEY `idx_dedup` (`dedup_key`),
+    FULLTEXT KEY `ft_bid_title_content` (`title`, `content_text`) WITH PARSER ngram
 ) ENGINE=InnoDB COMMENT='标讯主表';
 
 CREATE TABLE `bid_attachment` (
