@@ -126,6 +126,19 @@ a { text-decoration: none; color: inherit; }
 }
 .el-button--primary:active { background: var(--accent-deep) !important; }
 
+/* text 模式主按钮不参与渐变填充：否则蓝字压在蓝渐变背景上不可读 */
+.el-button.is-text.el-button--primary {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--accent-deep) !important;
+}
+.el-button.is-text.el-button--primary:hover,
+.el-button.is-text.el-button--primary:focus {
+  background: var(--accent-soft) !important;
+  box-shadow: none !important;
+  color: var(--accent-strong) !important;
+}
+
 /* ---- 通用：区块标题（左侧发光竖线）---- */
 .section-kicker {
   display: inline-flex;

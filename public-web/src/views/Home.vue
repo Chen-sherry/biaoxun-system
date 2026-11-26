@@ -25,12 +25,6 @@
                 <el-button :icon="MagicStick" type="primary" @click="onAiSearch">智能检索</el-button>
               </template>
             </el-input>
-            <div class="search-switch">
-              <el-radio-group v-model="searchMode" size="small">
-                <el-radio-button value="ai"><el-icon><MagicStick /></el-icon> 智能检索</el-radio-button>
-                <el-radio-button value="kw"><el-icon><Search /></el-icon> 高级检索</el-radio-button>
-              </el-radio-group>
-            </div>
           </div>
 
           <!-- 折叠式高级筛选面板 -->
@@ -129,25 +123,46 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, computed } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { MagicStick, Search, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock } from '@element-plus/icons-vue'
+import { MagicStick, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock } from '@element-plus/icons-vue'
+import axios from 'axios'
 import heroArt from '@/assets/brand/hero-illustration.svg'
 import { fetchPublicHot, fetchPortalStats, fetchPublicNoticeTypes } from '@/api'
 
 const router = useRouter()
 const aiKeyword = ref('')
-const searchMode = ref<'ai' | 'kw'>('ai')
 const filterOpen = ref<string[]>([])  // 默认收起，点击展开
 const noticeTypes = ref<any[]>([])
 const hotBids = ref<any[]>([])
 const stats = reactive({ total_bids: 0, today_new: 0, sources_enabled: 0 })
 
+// ===== 服务器时钟：取服务器 Date 头做基准，本地每秒自增，每 3 分钟重新同步 =====
+const clockText = ref('--:--:--')
+let clockOffset = 0            // 服务器时间 - 本地时间（毫秒）
+let tickTimer: number | null = null
+let syncTimer: number | null = null
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+function renderClock() {
+  const d = new Date(Date.now() + clockOffset)
+  clockText.value = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+async function syncServerClock() {
+  try {
+    const resp = await axios.head(import.meta.env.BASE_URL, { timeout: 8000 })
+    const raw = (resp.headers as any)?.date ?? (resp.headers as any)?.Date
+    const serverMs = raw ? Date.parse(raw) : NaN
+    if (!isNaN(serverMs)) clockOffset = serverMs - Date.now()
+  } catch { /* 同步失败则沿用上次偏移，本地继续走时 */ }
+  renderClock()
+}
+
 const statCards = computed(() => [
   { label: '累计标讯', value: stats.total_bids.toLocaleString(), icon: Tickets, color: '#38bdf8' },
   { label: '今日新增', value: stats.today_new.toLocaleString(), icon: TrendCharts, color: '#22d3ee' },
+  { label: '当前时间', value: clockText.value, icon: Clock, color: '#10b981' },
   { label: '启用采集源', value: stats.sources_enabled, icon: Connection, color: '#818cf8' },
-  { label: '自动更新中', value: '实时', icon: Clock, color: '#10b981' },
 ])
 
 const filter = reactive({
@@ -183,6 +198,12 @@ function formatTime(t: any) {
 }
 
 onMounted(async () => {
+  // 服务器时钟：先同步一次基准，之后本地每秒自增、每 3 分钟重新对时
+  syncServerClock()
+  renderClock()
+  tickTimer = window.setInterval(renderClock, 1000)
+  syncTimer = window.setInterval(syncServerClock, 3 * 60 * 1000)
+
   try {
     const [hot, s, nts] = await Promise.all([
       fetchPublicHot(16), fetchPortalStats(), fetchPublicNoticeTypes(),
@@ -191,6 +212,11 @@ onMounted(async () => {
     Object.assign(stats, s)
     noticeTypes.value = nts || []
   } catch (e) { console.error(e) }
+})
+
+onUnmounted(() => {
+  if (tickTimer) clearInterval(tickTimer)
+  if (syncTimer) clearInterval(syncTimer)
 })
 </script>
 
@@ -238,32 +264,22 @@ onMounted(async () => {
   animation: fade-up 0.6s 0.08s var(--ease) both;
 }
 .ai-search-box { max-width: 700px; animation: fade-up 0.6s 0.16s var(--ease) both; }
-.ai-search-box :deep(.el-input-group) { align-items: stretch; }
+.ai-search-box :deep(.el-input-group) { align-items: stretch; gap: 10px; }
 .ai-search-box :deep(.el-input__wrapper) {
   height: 54px; background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4) inset, 0 12px 32px rgba(0, 0, 0, 0.2) !important;
-  border-radius: 12px 0 0 12px;
+  border-radius: 12px;
 }
 .ai-search-box :deep(.el-input-group__append) {
   background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep)) !important;
-  border: none !important; border-radius: 0 12px 12px 0 !important;
+  border: none !important; border-radius: 12px !important;
   padding: 0 !important; display: flex; overflow: hidden;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
 }
 .ai-search-box :deep(.el-input-group__append .el-button) {
   color: #fff !important; font-weight: 600; font-size: 15px;
   height: auto; align-self: stretch; margin: 0; padding: 0 26px;
-  background: transparent; border: none; border-radius: 0;
-}
-.search-switch { text-align: left; margin-top: 16px; }
-.search-switch :deep(.el-radio-button__inner) {
-  background: rgba(255, 255, 255, 0.06); border-color: rgba(148, 197, 232, 0.24);
-  color: var(--on-dark-soft); padding: 9px 18px; display: inline-flex; align-items: center; gap: 5px;
-}
-.search-switch :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.3), rgba(34, 211, 238, 0.14)) !important;
-  border-color: var(--accent) !important; color: #fff !important;
-  box-shadow: 0 0 16px rgba(56, 189, 248, 0.2) inset;
+  background: transparent; border: none; border-radius: 12px;
 }
 .filter-panel {
   max-width: 720px; margin: 20px auto 0 0; background: rgba(255, 255, 255, 0.96);
@@ -360,7 +376,6 @@ onMounted(async () => {
   .ai-search-box :deep(.el-input__wrapper) { height: 48px; }
   .ai-search-box :deep(.el-input-group__append .el-button) { height: 48px; font-size: 13px; }
   .filter-panel { max-width: 100%; padding: 4px 10px; }
-  .search-switch { text-align: center; }
   .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 4px; margin-top: -22px; padding: 6px; }
   .stat-item { padding: 12px; gap: 10px; }
   .stat-icon { width: 38px; height: 38px; font-size: 17px; }
