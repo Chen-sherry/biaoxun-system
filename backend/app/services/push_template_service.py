@@ -233,28 +233,29 @@ def already_pushed(db, template_id: int, since: datetime) -> bool:
 # ============================================================
 
 def format_bids_rows(rows) -> str:
-    """把 (BidInfo, 公告类型名) 行集合格式化为结构化 markdown。
-    能抓到什么显示什么：空字段整行不显示（2026-11-26 用户指定）。
+    """把 (BidInfo, 公告类型名) 行集合格式化为企微 markdown 情报简报卡片（方案A）。
+    字段有什么显示什么；每条用引用块做卡片骨架（企微渲染为左侧蓝竖线）。
     每日推送 / 到期预警 / 归档通知 / 自定义模板共用同一格式。
     """
     blocks = []
-    for b, nt in rows:
-        lines = [f"标题：{(b.title or '').strip()[:60]}"]
+    for idx, (b, nt) in enumerate(rows, start=1):
+        title = (b.title or '').strip()[:60]
+        lines = [f"> **{idx:02d}｜** {title}"]
+        fields = []
         if b.tenderee:
-            lines.append(f"单位：{b.tenderee}")
-        mid = []
+            fields.append(f"单位 · {b.tenderee}")
         if b.budget:
-            mid.append(f"金额：{b.budget}")
+            fields.append(f"金额 · <font color=\"warning\">{b.budget}</font>")
         if b.deadline:
-            mid.append(f"截止时间：{b.deadline.strftime('%Y-%m-%d %H:%M')}")
-        if mid:
-            lines.append("　".join(mid))
+            fields.append(f"截止 · <font color=\"warning\">{b.deadline.strftime('%Y-%m-%d %H:%M')}</font>")
         if nt:
-            lines.append(f"分类：{nt}")
+            fields.append(f"分类 · <font color=\"info\">{nt}</font>")
+        if fields:
+            lines.append("> " + "　".join(fields))
         if b.source_url:
-            lines.append(f"[查看详情]({b.source_url})")
+            lines.append(f"> [查看详情 →]({b.source_url})")
         blocks.append("\n".join(lines))
-    return "\n\n".join(blocks) or "（无）"
+    return "\n\n".join(blocks) or "> （无标讯）"
 
 
 def query_bids_with_type(db, *filters, order_by=None, limit: int = 5):
