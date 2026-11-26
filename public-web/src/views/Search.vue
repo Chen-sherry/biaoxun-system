@@ -155,6 +155,18 @@ onMounted(async () => {
 .page-head h1 { font-size: 28px; font-weight: 800; color: var(--ink-900); margin: 8px 0 4px; }
 .page-head p { color: var(--ink-500); font-size: 14px; }
 .search-bar { max-width: 720px; margin: 0 auto 16px; padding: 8px; }
+.search-bar :deep(.el-input-group) { align-items: stretch; }
+.search-bar :deep(.el-input__wrapper) { border-radius: 10px 0 0 10px; }
+.search-bar :deep(.el-input-group__append) {
+  padding: 0 !important; display: flex; overflow: hidden;
+  border-radius: 0 10px 10px 0; border: none;
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep));
+}
+.search-bar :deep(.el-input-group__append .el-button) {
+  height: auto; align-self: stretch; margin: 0; padding: 0 24px;
+  background: transparent; border: none; border-radius: 0;
+  color: #fff; font-weight: 600;
+}
 .filter-row { padding: 16px; margin-bottom: 16px; }
 .result-bar {
   color: var(--ink-500); font-size: 13px; margin-bottom: 14px;

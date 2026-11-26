@@ -238,16 +238,23 @@ onMounted(async () => {
   animation: fade-up 0.6s 0.08s var(--ease) both;
 }
 .ai-search-box { max-width: 700px; animation: fade-up 0.6s 0.16s var(--ease) both; }
+.ai-search-box :deep(.el-input-group) { align-items: stretch; }
 .ai-search-box :deep(.el-input__wrapper) {
-  height: 52px; background: rgba(255, 255, 255, 0.97);
+  height: 54px; background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4) inset, 0 12px 32px rgba(0, 0, 0, 0.2) !important;
-  border-radius: 10px 0 0 10px;
+  border-radius: 12px 0 0 12px;
 }
 .ai-search-box :deep(.el-input-group__append) {
   background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep)) !important;
-  border: none !important; border-radius: 0 10px 10px 0 !important;
+  border: none !important; border-radius: 0 12px 12px 0 !important;
+  padding: 0 !important; display: flex; overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
 }
-.ai-search-box :deep(.el-input-group__append .el-button) { color: #fff !important; font-weight: 600; height: 52px; }
+.ai-search-box :deep(.el-input-group__append .el-button) {
+  color: #fff !important; font-weight: 600; font-size: 15px;
+  height: auto; align-self: stretch; margin: 0; padding: 0 26px;
+  background: transparent; border: none; border-radius: 0;
+}
 .search-switch { text-align: left; margin-top: 16px; }
 .search-switch :deep(.el-radio-button__inner) {
   background: rgba(255, 255, 255, 0.06); border-color: rgba(148, 197, 232, 0.24);

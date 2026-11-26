@@ -115,10 +115,16 @@ function handleCommand(cmd: string) {
   color: var(--on-dark-mute); padding: 18px 22px 8px;
 }
 .menu {
-  position: relative; z-index: 1; flex: 1; border-right: none;
+  position: relative; z-index: 1; flex: 1; min-height: 0;
+  overflow-y: auto; border-right: none;
   --el-menu-bg-color: transparent;
   --el-menu-hover-bg-color: rgba(56, 189, 248, 0.10);
 }
+/* 侧边栏菜单滚动条：细窄、悬停显现，避免菜单多时点不到底部 */
+.menu::-webkit-scrollbar { width: 4px; }
+.menu::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.28); border-radius: 4px; }
+.menu::-webkit-scrollbar-track { background: transparent; }
+.menu { scrollbar-width: thin; scrollbar-color: rgba(56, 189, 248, 0.28) transparent; }
 .menu :deep(.el-menu-item) { height: 46px; line-height: 46px; margin: 2px 10px; border-radius: 8px; }
 .menu :deep(.el-menu-item.is-active) {
   background: linear-gradient(135deg, rgba(56, 189, 248, 0.22), rgba(34, 211, 238, 0.06)) !important;

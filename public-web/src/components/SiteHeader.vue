@@ -159,14 +159,20 @@ export default { components: { Search, User, ArrowDown } }
 .header-right :deep(.el-input__wrapper) {
   background: rgba(255, 255, 255, 0.08) !important;
   box-shadow: 0 0 0 1px rgba(148, 197, 232, 0.22) inset !important;
+  border-radius: 8px 0 0 8px !important;
 }
 .header-right :deep(.el-input__inner) { color: var(--on-dark); }
 .header-right :deep(.el-input__inner::placeholder) { color: var(--on-dark-mute); }
 .header-right :deep(.el-input-group__append) {
   background: rgba(56, 189, 248, 0.16) !important;
-  border-color: rgba(148, 197, 232, 0.22) !important;
+  border: none !important; border-radius: 0 8px 8px 0 !important;
+  padding: 0 !important; display: flex; overflow: hidden;
 }
-.header-right :deep(.el-input-group__append .el-button) { color: var(--accent); }
+.header-right :deep(.el-input-group__append .el-button) {
+  color: var(--accent); background: transparent; border: none;
+  border-radius: 0; margin: 0; padding: 0 12px;
+  align-self: stretch; font-weight: 600;
+}
 .user-link {
   display: inline-flex; align-items: center; gap: 7px;
   color: var(--on-dark); cursor: pointer; font-size: 14px; font-weight: 500;
