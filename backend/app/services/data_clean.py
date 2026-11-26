@@ -483,6 +483,8 @@ _DEADLINE_LABELS = (
 # 出现在标签前面时说明是「文件售卖/获取」截止，不是投标截止，必须跳过
 # 「公示」是公示期截止（如 公示截止时间:2026-11-28），也不是投标截止
 _DEADLINE_EXCLUDE = ("售卖", "获取", "发售", "下载", "购买", "报名", "注册", "公示")
+# 排除词只看紧邻标签前的短窗口，避免「免费获取 四、响应文件提交 截止时间」被误排除
+_DEADLINE_PRE_WINDOW = 8
 # 中文日期：支持 2025年7月4日 9:5 / 2025年7月4日9时5分 / 2025年7月4日9时5分30秒
 _CN_DATE = (r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*"
             r"(?:\d{1,2}\s*[:：时]\s*\d{1,2}(?:\s*[:：分]\s*\d{1,2})?(?:\s*秒)?)?)")
@@ -555,16 +557,21 @@ def extract_deadline(text: str) -> Optional[datetime]:
             if idx < 0:
                 break
             start = idx + 1
-            pre = text[max(0, idx - 14): idx]
+            pre = text[max(0, idx - _DEADLINE_PRE_WINDOW): idx]
             if any(x in pre for x in _DEADLINE_EXCLUDE):
                 continue
             window = text[idx: idx + _DEADLINE_WINDOW]
             for rx in (_CN_DATE, _ISO_DATE):
                 m = re.search(rx, window)
-                if m:
-                    dt = _parse_cn_date(m.group(1))
-                    if dt and 2020 <= dt.year <= 2035:
-                        return dt
+                if not m:
+                    continue
+                # 日期前出现引号/右括号 → 是正文里夹的 JSON
+                # （如 "publishTime":"2025-06-11 12:34:51"），不是截止时间
+                if '"' in window[:m.start()] or '}' in window[:m.start()]:
+                    continue
+                dt = _parse_cn_date(m.group(1))
+                if dt and 2020 <= dt.year <= 2035:
+                    return dt
     return None
 
 

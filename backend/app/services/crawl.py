@@ -537,6 +537,48 @@ def crawl_ggzy(page: int = 1) -> List[Dict[str, Any]]:
 _GGZY_TITLE_SUFFIX = re.compile(r"[_|].*?(国家|全国)公共资源交易平台\s*$")
 
 
+def _ggzy_source_url(bsoup) -> Optional[str]:
+    """b/ 页的「原文链接地址」——真实正文在第三方源站（如浙江省公共资源交易网）"""
+    a = bsoup.find("a", href=True)
+    for x in bsoup.find_all("a", href=True):
+        href = (x.get("href") or "").strip()
+        if not href.startswith("http"):
+            continue
+        if "ggzy.gov.cn" in href:          # 站内链接不算原文
+            continue
+        if "原文" in x.get_text() or a is None:
+            return href
+    return None
+
+
+# 源站常见的正文容器（政务/交易类站点约定），按优先级依次尝试
+_GGZY_CONTENT_SELECTORS = (
+    "div.ewb-trade-mid", "div.TRS_Editor", "div#zoom", "div#content",
+    "div.detail_content", "div.article-content", "div.news-content",
+    "div.main-content", "div.content", "div.article",
+)
+
+
+def _ggzy_pick_content(soup, min_len: int = 200):
+    """从源站页面挑正文容器：先按已知选择器，再退回最长文本块"""
+    for sel in _GGZY_CONTENT_SELECTORS:
+        el = soup.select_one(sel)
+        if el and len(el.get_text(strip=True)) >= min_len:
+            return el
+    # 退路：文本最长的 div/article（排除明显是整页外壳的）
+    best, best_n = None, 0
+    for el in soup.find_all(["div", "article", "section"]):
+        cls = " ".join(el.get("class") or []).lower()
+        if any(k in cls for k in ("header", "footer", "nav", "menu", "sidebar")):
+            continue
+        n = len(el.get_text(strip=True))
+        if n > best_n:
+            best, best_n = el, n
+    if best and best_n >= min_len:
+        return best
+    return None
+
+
 def _ggzy_detail(url: str, hash_id: str) -> Optional[Dict[str, Any]]:
     """
     ggzy 详情页（聚合壳）：完整标题在 div.fully h4，另带招标项目编号/信息来源。
@@ -588,6 +630,18 @@ def _ggzy_detail(url: str, hash_id: str) -> Optional[Dict[str, Any]]:
                 body = (bsoup.select_one("div#mycontent")
                         or bsoup.select_one("div.detail_content")
                         or bsoup.select_one("div.detail"))
+
+                # b/ 页仍是占位（#mycontent 只有「公示内容」几个字）→ 三跳到原文链接地址
+                if body is None or len(body.get_text(strip=True)) < 50:
+                    src_url = _ggzy_source_url(bsoup)
+                    if src_url:
+                        src_html = _fetch_url(src_url, timeout=25, retries=1)
+                        if src_html:
+                            deep = _ggzy_pick_content(
+                                BeautifulSoup(src_html, "html.parser"))
+                            if deep is not None:
+                                body = deep
+                                raw["source_url"] = src_url
 
         # 兜底：b/ 页抓取失败 → 用壳页正文（信息薄但至少有标题编号）
         if body is None:
