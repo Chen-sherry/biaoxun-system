@@ -615,31 +615,40 @@ def _apply_budget_filter(cond: Dict[str, Any],
 #  主流程
 # ---------------------------------------------------------------- #
 
-def ai_search(query: str, limit: int = 20) -> Dict[str, Any]:
-    """一次完整 AI 检索：转译 → 召回 → 预算过滤 → 打分 → 分档（>=75 高相关 / 60~74 辅助）。"""
+def ai_search(query: str, limit: int = 120) -> Dict[str, Any]:
+    """一次完整 AI 检索：转译 → 召回 → 预算过滤 → 打分 → 分档。
+
+    items 返回全部打分结果（按分数降序，最多 limit 条）：前端默认只展示
+    高相关（>=75），点「加载更多」按 60/40/20/0 分档逐级放宽，直到全部显示。
+    最高分低于展示底线（FALLBACK_MIN_SCORE）视为真无关 → 返回空列表走空态。
+    """
     t0 = time.time()
     cond, llm_translate_ok = translate_query(query)
     candidates, date_relaxed, meta = search_candidates(cond)
     candidates, budget_dropped = _apply_budget_filter(cond, candidates)
     scored, score_diag = score_candidates(query, candidates, date_relaxed=date_relaxed, cond=cond)
 
-    passed = [s for s in scored if s["score"] >= MID_SCORE][:limit]
-    fallback_used = False
-    if not passed and scored and scored[0]["score"] >= FALLBACK_MIN_SCORE:
-        # 兜底：有过线边缘的候选但不足时，给最接近的结果（标注兜底）
-        passed = scored[:min(10, limit)]
+    if scored and scored[0]["score"] < FALLBACK_MIN_SCORE:
+        # 真无关（最高分都不到展示底线）→ 空态，不给用户看垃圾
+        items_out: List[Dict[str, Any]] = []
+        fallback_used = False
+    elif scored and scored[0]["score"] < MID_SCORE:
+        # 兜底：没有 60+ 的结果，只给最接近的 10 条（前端标「兜底参考」并全量展示）
+        items_out = scored[:min(10, limit)]
         fallback_used = True
-    # 最高分低于分数线 → 真无关，返回空列表让前端走空态提示
-    high_count = sum(1 for s in passed if s["score"] >= HIGH_SCORE)
-    mid_count = len(passed) - high_count
+    else:
+        items_out = scored[:limit]
+        fallback_used = False
+    high_count = sum(1 for s in items_out if s["score"] >= HIGH_SCORE)
+    mid_count = sum(1 for s in items_out if MID_SCORE <= s["score"] < HIGH_SCORE)
     lib_range, _ = _lib_date_note()
 
     return {
-        "items": passed,
+        "items": items_out,
         "translated": dict(cond),
         "date_relaxed": date_relaxed,
         "candidate_count": len(candidates),
-        "passed_count": len(passed),
+        "passed_count": len(items_out),
         "cost_ms": int((time.time() - t0) * 1000),
         "high_count": high_count,
         "mid_count": mid_count,

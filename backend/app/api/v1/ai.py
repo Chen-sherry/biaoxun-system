@@ -19,7 +19,7 @@ router = APIRouter(prefix="/ai", tags=["AI 功能"])
 
 class AISearchIn(BaseModel):
     query: str  # 用户大白话检索意图
-    limit: int = 20
+    limit: int = 120  # 打分结果全量返回上限（前端按 75/60/40/20/0 分档渐进展示）
 
 
 @router.post("/search", summary="AI 检索（大白话搜索，付费会员可用）")
@@ -31,7 +31,7 @@ def search(
     未登录 401 / 非付费会员 403，前端据此提示开通会员。"""
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="检索内容不能为空")
-    result = ai_search(req.query.strip(), limit=max(1, min(req.limit, 50)))
+    result = ai_search(req.query.strip(), limit=max(1, min(req.limit, 120)))
     return ApiResponse.ok(result)
 
 
