@@ -26,7 +26,7 @@ import emptyArt from '@/assets/brand/empty-state.svg'
 .nf-art { width: 240px; max-width: 70vw; animation: float-slow 6s ease-in-out infinite; }
 .nf-code {
   font-size: 64px; font-weight: 800; line-height: 1; margin-top: -10px;
-  background: linear-gradient(135deg, var(--accent-strong), var(--accent-cyan));
+  background: linear-gradient(135deg, #0369a1, var(--accent-deep));
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
   font-variant-numeric: tabular-nums;
 }
