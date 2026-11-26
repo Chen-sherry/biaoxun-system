@@ -712,7 +712,8 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
             db.query(BidInfo.dedup_key, BidInfo.content_text).all()
         )
 
-        stats = {"fetched": 0, "saved": 0, "updated": 0, "skipped": 0, "details": 0}
+        stats = {"fetched": 0, "saved": 0, "updated": 0, "skipped": 0,
+                 "details": 0, "ai": 0}
 
         def handle(raw: Dict[str, Any]) -> None:
             if not raw.get("title"):
@@ -747,7 +748,9 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                                                  "project_code": row.project_code,
                                                  "region_code": row.region_code,
                                                  "tenderee": row.tenderee,
-                                                 "budget": row.budget})
+                                                 "budget": row.budget,
+                                                 "winner_unit": row.winner_unit,
+                                                 "win_amount": row.win_amount})
                                     for k, v in extra.items():
                                         setattr(row, k, v)
                                 except Exception:
@@ -779,10 +782,28 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                                  "project_code": mapped.get("project_code"),
                                  "region_code": mapped.get("region_code"),
                                  "tenderee": mapped.get("tenderee"),
-                                 "budget": mapped.get("budget")})
+                                 "budget": mapped.get("budget"),
+                                 "winner_unit": mapped.get("winner_unit"),
+                                 "win_amount": mapped.get("win_amount")})
                     mapped.update(extra)
                 except Exception:
                     logger.warning("入库即提取失败 title=%s", str(mapped.get("title"))[:40], exc_info=True)
+
+            # 双线第二道（2026-11-26）：规则提取后关键字段仍不满 → AI 兜底提取；
+            # AI 返回空视为「确认没有」，任何失败一律放行入库，不阻塞采集
+            try:
+                from app.services.ai_extract import missing_fields, ai_extract_missing
+                miss = missing_fields(mapped)
+                if miss:
+                    ai_vals = ai_extract_missing(
+                        mapped.get("title") or "",
+                        mapped.get("content_text") or "", miss)
+                    if ai_vals:
+                        mapped.update(ai_vals)
+                        stats["ai"] += 1
+            except Exception:
+                logger.warning("AI 兜底失败，按现状放行 title=%s",
+                               str(mapped.get("title"))[:40], exc_info=True)
 
             db.add(BidInfo(**mapped))
             existing[mapped["dedup_key"]] = mapped.get("content_text")
@@ -814,7 +835,8 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
 
         logger.info(
             f"[crawl] {code}: fetched={stats['fetched']} saved={stats['saved']} "
-            f"updated={stats['updated']} skipped={stats['skipped']} details={stats['details']}"
+            f"updated={stats['updated']} skipped={stats['skipped']} "
+            f"details={stats['details']} ai={stats['ai']}"
         )
         return {
             "source": code,
@@ -824,6 +846,7 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
             "updated": stats["updated"],
             "skipped": stats["skipped"],
             "details": stats["details"],
+            "ai": stats["ai"],
         }
     finally:
         if conn is not None:

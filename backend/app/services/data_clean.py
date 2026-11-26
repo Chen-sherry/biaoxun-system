@@ -531,6 +531,20 @@ _BUDGET_RES = [
 _BUDGET_NEG = ("中标", "成交", "结算", "决算",
                "代理", "服务费", "起拍", "保证金", "收费")  # 这些词出现在标签前则不是预算
 
+# 结果类字段（ggzy 中标/成交公告）：标签与值常被换行分隔，extract_fields_from_text
+# 已把正文压平成单行，压平后「中标人： 值」可同行匹配。
+# 不匹配「中标候选人」（候选人 ≠ 中标人，宁缺勿滥）
+_WINNER_UNIT_RES = [
+    re.compile(r"(?:中标|成交|中选)(?:人|供应商|单位)\s*(?:名\s*称|全称)?"
+               r"\s*[：:]\s*([^\s：:，,；;。]{2,60})"),
+]
+_WINNER_AMOUNT_RES = [
+    # 「中标价（费率或单价等）：250.4306万元」括号说明可跳过
+    re.compile(r"(?:中标|成交|中选)(?:价|金额|报价)\s*(?:[（(][^）)]*[）)])?"
+               r"\s*[：:为约]?\s*([\d,]+(?:\.\d+)?)\s*(亿元|万元|元)"),
+]
+_WINNER_UNIT_BAD = ("未开标", "详见", "无", "待定", "废标", "流标", "否决")
+
 
 # 编号值后面若紧跟这些词，说明吞到了相邻表格列（「…2025-024采购方式竞争性磋商…」），截断
 _PC_STOP = ("采购方式", "采购公告", "采购需求", "预算", "最高限价", "项目名称",
@@ -683,6 +697,45 @@ def extract_budget(text: str) -> Optional[str]:
     return None
 
 
+def extract_winner(text: str) -> dict:
+    """提取结果类字段：中标单位、中标金额（元）。
+    仅用于补空字段；标签与值同行/压平后相邻均可匹配。
+    返回只含确实提取到的键。"""
+    out: dict = {}
+    flat = re.sub(r"\s+", " ", text or "")
+    for rx in _WINNER_UNIT_RES:
+        m = rx.search(flat)
+        if m:
+            v = m.group(1).strip().strip("：:　 ")
+            # 值吞到相邻标签/越界时按已知标签截断
+            for stop in ("中标", "成交", "中选", "采购人", "招标人", "项目名称",
+                         "标段", "统一社会信用代码"):
+                i = v.find(stop)
+                if i > 0:
+                    v = v[:i]
+            v = v.strip()
+            if v and v not in _WINNER_UNIT_BAD and 2 <= len(v) <= 60:
+                out["winner_unit"] = v
+                break
+    for rx in _WINNER_AMOUNT_RES:
+        m = rx.search(flat)
+        if m:
+            try:
+                val = float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            unit = m.group(2)
+            if val <= 0:
+                continue
+            if unit == "亿元":
+                val *= 100000000
+            elif unit in ("万元", "万"):
+                val *= 10000
+            out["win_amount"] = val
+            break
+    return out
+
+
 def parse_budget_wan(s: Optional[str]) -> Optional[float]:
     """把 budget 字符串（如 "350.00 万元"、"1.2 亿元"、"500000 元"）折算成万元数值。
     解析失败返回 None（调用方决定保留还是跳过）。单位口径与 extract_budget 一致。"""
@@ -730,6 +783,13 @@ def extract_fields_from_text(title: str, text: str, conn=None,
         bg = extract_budget(flat)
         if bg:
             out["budget"] = bg
+    # 结果类字段：中标单位/中标金额（中标公告正文里有，原管线一直没提）
+    if not cur.get("winner_unit") or not cur.get("win_amount"):
+        win = extract_winner(flat)
+        if not cur.get("winner_unit") and win.get("winner_unit"):
+            out["winner_unit"] = win["winner_unit"]
+        if not cur.get("win_amount") and win.get("win_amount"):
+            out["win_amount"] = win["win_amount"]
     # 地区：正文标签没写时，用正文里出现的市/省名反查 dict_region（只填空值）
     if (not cur.get("region_code") or cur.get("region_code") == "-1") and conn is not None:
         try:
