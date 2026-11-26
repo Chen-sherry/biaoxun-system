@@ -123,9 +123,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, computed } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { MagicStick, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock } from '@element-plus/icons-vue'
+import axios from 'axios'
 import heroArt from '@/assets/brand/hero-illustration.svg'
 import { fetchPublicHot, fetchPortalStats, fetchPublicNoticeTypes } from '@/api'
 
@@ -136,10 +137,31 @@ const noticeTypes = ref<any[]>([])
 const hotBids = ref<any[]>([])
 const stats = reactive({ total_bids: 0, today_new: 0, sources_enabled: 0 })
 
+// ===== 服务器时钟：取服务器 Date 头做基准，本地每秒自增，每 3 分钟重新同步 =====
+const clockText = ref('--:--:--')
+let clockOffset = 0            // 服务器时间 - 本地时间（毫秒）
+let tickTimer: number | null = null
+let syncTimer: number | null = null
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+function renderClock() {
+  const d = new Date(Date.now() + clockOffset)
+  clockText.value = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+async function syncServerClock() {
+  try {
+    const resp = await axios.head(import.meta.env.BASE_URL, { timeout: 8000 })
+    const raw = (resp.headers as any)?.date ?? (resp.headers as any)?.Date
+    const serverMs = raw ? Date.parse(raw) : NaN
+    if (!isNaN(serverMs)) clockOffset = serverMs - Date.now()
+  } catch { /* 同步失败则沿用上次偏移，本地继续走时 */ }
+  renderClock()
+}
+
 const statCards = computed(() => [
   { label: '累计标讯', value: stats.total_bids.toLocaleString(), icon: Tickets, color: '#38bdf8' },
   { label: '今日新增', value: stats.today_new.toLocaleString(), icon: TrendCharts, color: '#22d3ee' },
-  { label: '实时更新中', value: '实时', icon: Clock, color: '#10b981' },
+  { label: '实时更新中', value: clockText.value, icon: Clock, color: '#10b981' },
   { label: '启用采集源', value: stats.sources_enabled, icon: Connection, color: '#818cf8' },
 ])
 
@@ -176,6 +198,12 @@ function formatTime(t: any) {
 }
 
 onMounted(async () => {
+  // 服务器时钟：先同步一次基准，之后本地每秒自增、每 3 分钟重新对时
+  syncServerClock()
+  renderClock()
+  tickTimer = window.setInterval(renderClock, 1000)
+  syncTimer = window.setInterval(syncServerClock, 3 * 60 * 1000)
+
   try {
     const [hot, s, nts] = await Promise.all([
       fetchPublicHot(16), fetchPortalStats(), fetchPublicNoticeTypes(),
@@ -184,6 +212,11 @@ onMounted(async () => {
     Object.assign(stats, s)
     noticeTypes.value = nts || []
   } catch (e) { console.error(e) }
+})
+
+onUnmounted(() => {
+  if (tickTimer) clearInterval(tickTimer)
+  if (syncTimer) clearInterval(syncTimer)
 })
 </script>
 
