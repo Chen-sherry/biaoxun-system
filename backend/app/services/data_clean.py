@@ -181,14 +181,17 @@ PROCURE_TYPE_RULES = [
 ]
 
 def infer_procure_type(title: str, content_text: str = "") -> Optional[str]:
-    """推断 proc_type"""
+    """推断 proc_type：先按标题匹配，再按正文全文匹配（原先只看正文前 200 字，
+    方式词出现在正文深处的补不到；调用方均只在字段为空时才调用）"""
     if not title:
         return None
-    blob = title + " " + (content_text or "")[:200]
-    for keywords, name in PROCURE_TYPE_RULES:
-        for kw in keywords:
-            if kw in blob:
-                return name
+    for blob in (title, content_text or ""):
+        if not blob:
+            continue
+        for keywords, name in PROCURE_TYPE_RULES:
+            for kw in keywords:
+                if kw in blob:
+                    return name
     return None
 
 
@@ -457,8 +460,10 @@ def backfill_notice_type(limit: int = 0) -> int:
 # 导致新入库标讯 deadline/项目编号等字段为空就被推送 —— 现爬虫与补抓脚本共用本组函数
 # =====================================================
 
-# 编号值：字母/数字/括号/连字符等，可带「号」尾；不含中文，避免吞掉「二、项目名称」
-_CODE_VAL = r"([\[\(（]?[A-Za-z0-9][A-Za-z0-9\-_（）()\[\]\.\/]{1,44}号?)"
+# 编号值：允许中文前缀（如「浙工咨丽招采〔2026〕5号」），但必须含字母/数字，
+# 排除「项目编号：见附件」这类纯中文；遇冒号/句读即截断，避免吞掉相邻表格列
+_CODE_VAL = (r"([\[\(（〔]?[A-Za-z0-9一-龥]"
+             r"[A-Za-z0-9一-龥\-_（）()〔〕\[\]\.\/]{1,44}号?)")
 _PROJECT_CODE_RES = [
     re.compile(r"项目编号\s*[：:]?\s*" + _CODE_VAL),
     re.compile(r"采购项目编号\s*[：:]?\s*" + _CODE_VAL),
@@ -485,11 +490,11 @@ _DEADLINE_LABELS = (
 _DEADLINE_EXCLUDE = ("售卖", "获取", "发售", "下载", "购买", "报名", "注册", "公示")
 # 排除词只看紧邻标签前的短窗口，避免「免费获取 四、响应文件提交 截止时间」被误排除
 _DEADLINE_PRE_WINDOW = 8
-# 中文日期：支持 2025年7月4日 9:5 / 2025年7月4日9时5分 / 2025年7月4日9时5分30秒
+# 中文日期：支持 2025年7月4日 9:5 / 2025年7月4日9时5分 / …14 点 00 分（「点」也算时分隔）
 _CN_DATE = (r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*"
-            r"(?:\d{1,2}\s*[:：时]\s*\d{1,2}(?:\s*[:：分]\s*\d{1,2})?(?:\s*秒)?)?)")
-# ISO 日期：2025-07-08 15:00:00 / 2025/7/8 15:00
-_ISO_DATE = r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*\d{1,2}[:：]\d{2}(?::\d{2})?)"
+            r"(?:\d{1,2}\s*[:：时点]\s*\d{1,2}(?:\s*[:：分]\s*\d{1,2})?(?:\s*秒)?)?)")
+# ISO 日期：2025-07-08 15:00:00 / 2025/7/8 15:00 / 2026-12-02（时间可选，纯日期也算）
+_ISO_DATE = r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s*\d{1,2}[:：]\d{2}(?::\d{2})?)?)"
 # 截止标签后多少字符内出现日期才算数（太大会把空表单字段后面无关日期误取）
 _DEADLINE_WINDOW = 80
 
@@ -499,21 +504,38 @@ _REGION_RES = [
     re.compile(r"采购单位地址[：:]\s*(?:[一-龥]{2,6}省|)?([一-龥]{2,6}市)"),
 ]
 
-# 单位（招标人/采购人）：标签后取到行尾/分隔符
+# 单位（招标人/采购人）：常见形态
+#   「采购人信息： 名称：值」/「招标人: 名称:值」/「采购人名称：值」/「招标人为值」/「招标人 值」
 _TENDEREE_RES = [
+    # 标签 + 可选「信息/名称」后缀 + 冒号 + 可选「名称：」子标签 + 值
     re.compile(r"(?:招标人|招标单位|采购人|采购单位|项目业主|发包人|需求单位)"
-               r"\s*[：:]\s*([^\n\r，,；;。]{2,60})"),
-    re.compile(r"(?:招标人|采购人)[：:]\s*([^\n\r，,；;。]{2,60})"),
+               r"\s*(?:信息|名\s*称|单位名称)?\s*[：:]\s*"
+               r"(?:名\s*称\s*[：:]\s*)?"
+               r"([^\n\r，,；;。]{2,60})"),
+    # 「招标人为值」「采购人为值」
+    re.compile(r"(?:招标人|招标单位|采购人|采购单位|项目业主|发包人|需求单位)"
+               r"\s*为\s*([^\n\r，,；;。]{2,60})"),
+    # 「招标人 值」——空格分隔无冒号（后面不能紧跟 名称/信息 等，避免重复吞子标签）
+    re.compile(r"(?:招标人|招标单位|采购人|采购单位|项目业主|发包人|需求单位)"
+               r"[ 　]+(?![名信联电邮招采项])([^\n\r，,；;。]{2,60})"),
 ]
 
 # 预算金额：数值 + 单位（万元/元），排除「中标金额/成交金额」（那是结果不是预算）
 # 「投标报价」是 ggzy 中标公示表格里的金额（小写报价），对展示有意义，纳入
+# 注：原先「任意数字+元」兜底会误提代理服务费/起拍价/中标报价（实证 #8650/#8643/#8647），
+#     已删除——预算必须有明确标签才认
 _BUDGET_RES = [
     re.compile(r"(?:预算金额|项目预算|采购预算|预算|总投资|项目金额|投标报价)"
                r"\s*[：:为约]?\s*([\d,]+(?:\.\d+)?)\s*(万元|亿元|元)"),
-    re.compile(r"(?:大写[^\d]{0,20})?([\d,]+(?:\.\d+)?)\s*[（(]?元[)）]?"),
 ]
-_BUDGET_NEG = ("中标", "成交", "结算", "决算")  # 这些词出现在标签前则不是预算
+_BUDGET_NEG = ("中标", "成交", "结算", "决算",
+               "代理", "服务费", "起拍", "保证金", "收费")  # 这些词出现在标签前则不是预算
+
+
+# 编号值后面若紧跟这些词，说明吞到了相邻表格列（「…2025-024采购方式竞争性磋商…」），截断
+_PC_STOP = ("采购方式", "采购公告", "采购需求", "预算", "最高限价", "项目名称",
+            "标段名称", "招标文件编号", "项目分包", "磋商日期", "开标时间",
+            "中标", "成交", "公告期限", "公示期限", "联系电话", "联系人")
 
 
 def extract_project_code(text: str) -> Optional[str]:
@@ -521,21 +543,36 @@ def extract_project_code(text: str) -> Optional[str]:
         m = rx.search(text)
         if not m:
             continue
-        v = m.group(1).strip().rstrip("。；;，,、")
-        if len(v) >= 5 and _HAS_ALNUM.search(v):
+        # 去掉首尾包裹括号与句读（如 标题「（项目编号JXLH2026-LN-XC006）」尾部的 ））
+        v = m.group(1).strip().strip("（）()〔〕[]【】。；;，,、 ")
+        # 值内吞到相邻列的标签词 → 截到标签词之前
+        cuts = [v.find(w) for w in _PC_STOP]
+        cuts = [i for i in cuts if i > 0]
+        if cuts:
+            v = v[:min(cuts)]
+        v = v.strip().strip("（）()〔〕[]【】。；;，,、 ")
+        if len(v) >= 5 and len(v) <= 40 and _HAS_ALNUM.search(v):
             return v
     return None
 
 
 def _parse_cn_date(s: str) -> Optional[datetime]:
-    """兼容 中文日期（2025年7月4日 9:5 / 9时5分30秒）与 ISO（2025-07-08 15:00:00）"""
+    """兼容 中文日期（2025年7月4日 9:5 / 9时5分30秒 / 14 点 00 分）与 ISO（2025-07-08 15:00:00 / 2026-12-02）
+    2026-11-26 修复：年月日/时分之间的空格（「2026 年 12 月 17 日」）曾导致锚定失败；
+    「点」原先不识别；日期尾部残留字（如「17：30前」）导致整体匹配失败。
+    """
     s = re.sub(r"\s+", " ", s).strip()
     s = (s.replace("年", "-").replace("月", "-").replace("日", " ")
-           .replace("时", ":").replace("分", ":").replace("秒", "")
+           .replace("点", ":").replace("时", ":").replace("分", ":").replace("秒", "")
            .replace("：", ":").replace("/", "-"))
-    s = re.sub(r"\s+", " ", s).strip().rstrip(":").strip()
-    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})"
-                 r"(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$", s)
+    s = re.sub(r"\s+", " ", s)
+    # 去掉分隔符两侧空格：「2026 - 12 - 17」「09 : 30」→「2026-12-17」「09:30」
+    s = re.sub(r"\s*-\s*", "-", s)
+    s = re.sub(r"\s*:\s*", ":", s)
+    s = s.strip().rstrip(":").strip()
+    # 用 search 而非全串 match：容忍尾部残留字（「前」「截止」等）
+    m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})"
+                  r"(?:[ ](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?", s)
     if not m:
         return None
     y, mo, d, h, mi, se = m.groups()
@@ -583,20 +620,42 @@ def extract_region_name(text: str) -> Optional[str]:
     return None
 
 
+# 值以这些词开头说明采购人格子是空的、抓到的是相邻单元格/正文，不是单位名
+_TENDEREE_BAD_PREFIX = (
+    "项目名称", "项目编号", "标段", "采购项目", "名称",
+    "联系人", "联系电话", "联系方式", "电话", "邮箱",
+    "招标代理", "代理机构", "采购代理",
+    "本项目", "该项目", "根据", "按照", "受",
+    # 采购人格子为空时抓到的相邻标签（「需求单位： 需求单位地址：…」）
+    "需求单位", "采购单位", "地址", "邮编",
+)
+
+
 def extract_tenderee(text: str) -> Optional[str]:
     """从正文提取招标人/采购人（仅用于补空字段）。
-    表格文本里值后面常跟着 联系方式/招标代理 等相邻单元格，需截断。
+    表格文本里值后面常跟着 联系方式/招标代理 等相邻单元格，需截断；
+    采购人格子为空时会抓到「项目名称：XX」等相邻列，需按前缀跳过。
     """
     for rx in _TENDEREE_RES:
         m = rx.search(text)
         if m:
             v = m.group(1).strip().strip("：:　 ")
+            # 单位名里不该有空格/冒号：一旦出现说明已越界到相邻单元格或下一字段
+            cuts = [i for i in (v.find(" "), v.find("　"), v.find("："), v.find(":"))
+                    if i > 0]
+            if cuts:
+                v = v[:min(cuts)]
+            if v.startswith(_TENDEREE_BAD_PREFIX):
+                continue
             for stop in ("联系方式", "联系人", "联系电话", "电话", "邮箱",
-                         "招标代理", "代理机构", "采购代理"):
+                         "招标代理", "代理机构", "采购代理",
+                         "项目名称", "项目编号", "标段名称", "标段编号"):
                 i = v.find(stop)
                 if i > 0:
                     v = v[:i]
             v = v.strip().strip("：:　 ")
+            if v.startswith(_TENDEREE_BAD_PREFIX):
+                continue
             if 2 <= len(v) <= 60:
                 return v
     return None
@@ -624,6 +683,26 @@ def extract_budget(text: str) -> Optional[str]:
     return None
 
 
+def parse_budget_wan(s: Optional[str]) -> Optional[float]:
+    """把 budget 字符串（如 "350.00 万元"、"1.2 亿元"、"500000 元"）折算成万元数值。
+    解析失败返回 None（调用方决定保留还是跳过）。单位口径与 extract_budget 一致。"""
+    if not s:
+        return None
+    m = re.search(r"([\d,]+(?:\.\d+)?)\s*(亿元|万元|万|元)?", str(s))
+    if not m:
+        return None
+    try:
+        val = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    unit = m.group(2) or "元"
+    if unit in ("亿元",):
+        return val * 10000
+    if unit in ("万元", "万"):
+        return val
+    return val / 10000
+
+
 def extract_fields_from_text(title: str, text: str, conn=None,
                              current: Optional[dict] = None) -> dict:
     """从正文一次性提取所有可补字段，只返回**当前为空**的字段新值。
@@ -639,7 +718,8 @@ def extract_fields_from_text(title: str, text: str, conn=None,
         if dl:
             out["deadline"] = dl
     if not cur.get("project_code"):
-        pc = extract_project_code(flat)
+        # 标题也参与：「XX采购项目（项目编号JXLH2026-LN-XC006）」编号只在标题里
+        pc = extract_project_code((title or "") + " " + flat)
         if pc:
             out["project_code"] = pc
     if not cur.get("tenderee"):
@@ -650,16 +730,35 @@ def extract_fields_from_text(title: str, text: str, conn=None,
         bg = extract_budget(flat)
         if bg:
             out["budget"] = bg
+    # 地区：正文标签没写时，用正文里出现的市/省名反查 dict_region（只填空值）
     if (not cur.get("region_code") or cur.get("region_code") == "-1") and conn is not None:
         try:
+            # conn 可能是连接（clean_one）也可能是游标（爬虫入库），统一成游标
+            cursor = conn if hasattr(conn, "execute") else conn.cursor()
             nname = extract_region_name(flat)
+            code = None
             if nname:
-                cur.execute("SELECT code FROM dict_region WHERE name=%s LIMIT 1", (nname,))
-                row = cur.fetchone()
+                cursor.execute("SELECT code FROM dict_region WHERE name=%s LIMIT 1", (nname,))
+                row = cursor.fetchone()
                 if row:
-                    out["region_code"] = row[0]
+                    code = row[0]
+            if not code:
+                # 市（level=2）优先，其次省（level=1）；同级长名优先，避免短名误吞
+                cursor.execute("SELECT name, code FROM dict_region "
+                               "WHERE level IN (1,2) ORDER BY level DESC, LENGTH(name) DESC")
+                for cname, ccode in cursor.fetchall():
+                    if cname and cname in flat:
+                        code = ccode
+                        break
+            if code:
+                out["region_code"] = code
         except Exception:
             logger.debug("extract region failed", exc_info=True)
+
+    # 客群：采购人补出来后按「采购人+标题」重推（原来只按标题，代理机构名带“公司”会误判民企）
+    if out.get("tenderee"):
+        out["customer_group"] = infer_customer_group(out["tenderee"], title)
+
     return out
 
 

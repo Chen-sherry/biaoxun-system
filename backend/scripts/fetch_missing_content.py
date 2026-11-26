@@ -202,7 +202,7 @@ def main() -> int:
             pc, dl, rc, pt, iid = cur.fetchone()
 
             if not pc:
-                npc = extract_project_code(flat)
+                npc = extract_project_code((title or "") + " " + flat)
                 if npc:
                     pc, stats["pc"] = npc, stats["pc"] + 1
             if dl is None:
