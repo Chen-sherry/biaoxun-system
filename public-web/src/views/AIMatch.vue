@@ -62,10 +62,7 @@ function initBand() {
   else minScore.value = 0
 }
 
-const highCount = computed(() => items.value.filter(i => i.score >= 75).length)
-const midCount = computed(() => items.value.filter(i => i.score >= 60 && i.score < 75).length)
-
-// 真实总数：全量命中数 > 打分池时顶部显示「共 N 条 · AI 已精排前 M 条」，
+// 真实总数：全量命中数 > 打分池时顶部显示「共 N 条 · 精排 M」，
 // 否则维持原显示（totalHits 为空/命中数不超打分池时不加噪音）
 const totalCount = computed(() =>
   totalHits.value && totalHits.value > items.value.length ? totalHits.value : items.value.length)
@@ -114,9 +111,9 @@ const emptyDesc = computed(() => {
 const diagModeText = computed(() => {
   const m = diagnostics.value?.match_mode as string
   const map: Record<string, string> = {
-    ft_and: '全文检索（全部词命中）',
+    ft_and: '全文检索（全词）',
     ft_or: '全文检索',
-    ft_or_exp: '全文检索（含同义词扩展）',
+    ft_or_exp: '全文检索（同义词）',
     like_and: '关键词匹配',
     like_or: '关键词匹配（兜底）',
     latest: '最新发布',
@@ -168,7 +165,14 @@ async function doAiSearch() {
         await ElMessageBox.alert(
           'AI 检索是付费会员专属功能，开通会员后即可使用。\n（当前为演示环境，会员开通功能即将上线）',
           '会员专享',
-          { type: 'warning', confirmButtonText: '查看会员套餐', center: true },
+          {
+            type: 'warning',
+            confirmButtonText: '查看会员套餐',
+            cancelButtonText: '登录',
+            showCancelButton: true,
+            center: true,
+            onCancel: () => router.push('/login'),
+          },
         )
         router.push('/member')
       } catch { /* 用户取消 */ }
@@ -216,7 +220,7 @@ onMounted(async () => {
       <div class="page-head">
         <span class="section-kicker">AI SEMANTIC SEARCH</span>
         <h1>智能检索</h1>
-        <p>描述需求 → AI 转译 → 全文检索 + 语义评分，默认展示 75+ 高相关，点「加载更多」逐档放宽</p>
+        <p>描述需求，AI 转译 + 语义评分，默认展示 75+ 高相关</p>
       </div>
 
       <el-card shadow="never" class="main-card tech-card">
@@ -236,7 +240,7 @@ onMounted(async () => {
               </el-button>
             </template>
           </el-input>
-          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 默认展示 75 分以上高相关，加载更多逐档查看其余结果</div>
+          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 默认展示 75+ 高相关</div>
         </div>
 
         <!-- 加载中 -->
@@ -250,7 +254,7 @@ onMounted(async () => {
         <div v-else-if="items.length > 0" class="results">
           <div class="result-meta">
             <el-icon><DataLine /></el-icon>
-            共 {{ totalCount }} 条<template v-if="rankedCount > 0"> · AI 已精排前 {{ rankedCount }} 条</template>（高相关 {{ highCount }} · 辅助 {{ midCount }}）<template v-if="hiddenCount > 0"> · 已显示 {{ visibleItems.length }} 条</template>
+            共 {{ totalCount }} 条<template v-if="rankedCount > 0"> · 精排 {{ rankedCount }}</template><template v-if="hiddenCount > 0"> · 已显示 {{ visibleItems.length }} 条</template>
           </div>
 
           <!-- AI 识别出的检索条件 -->
@@ -268,7 +272,7 @@ onMounted(async () => {
             title="知识库中该时间段没有命中结果，已自动放宽时间条件，以下结果按相关性排序"
             type="info" :closable="false" show-icon class="relax-alert"
           />
-          <div v-if="diagnostics" class="diag-line">召回：{{ diagModeText }} · 候选 {{ diagnostics.candidate_count }} 条{{ diagnostics.budget_dropped ? ` · 预算外剔除 ${diagnostics.budget_dropped} 条` : '' }}</div>
+          <div v-if="diagnostics" class="diag-line">{{ diagModeText }} · 候选 {{ diagnostics.candidate_count }} 条</div>
 
           <template v-for="(item, index) in visibleItems" :key="item.id">
             <!-- 分档分隔线：跨过档位边界时插入 -->

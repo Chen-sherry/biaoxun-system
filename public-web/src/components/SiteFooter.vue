@@ -13,7 +13,7 @@
       <div class="footer-section">
         <h4>快捷入口</h4>
         <router-link to="/">首页</router-link>
-        <router-link to="/search">传统搜索</router-link>
+        <router-link to="/search">高级搜索</router-link>
         <router-link to="/ai-match">智能检索</router-link>
       </div>
       <div class="footer-section">

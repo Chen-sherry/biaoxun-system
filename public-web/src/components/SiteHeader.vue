@@ -41,7 +41,7 @@ export default { components: { Search, User, ArrowDown } }
       </div>
       <nav class="nav">
         <router-link to="/" exact-active-class="active">首页</router-link>
-        <router-link to="/search" active-class="active">传统搜索</router-link>
+        <router-link to="/search" active-class="active">高级搜索</router-link>
         <router-link to="/ai-match" active-class="active">智能检索</router-link>
         <router-link to="/member" active-class="active">会员中心</router-link>
       </nav>
@@ -94,7 +94,7 @@ export default { components: { Search, User, ArrowDown } }
         </div>
         <nav class="mobile-links">
           <router-link to="/" exact-active-class="active">首页</router-link>
-          <router-link to="/search" active-class="active">传统搜索</router-link>
+          <router-link to="/search" active-class="active">高级搜索</router-link>
           <router-link to="/ai-match" active-class="active">智能检索</router-link>
           <router-link to="/member" active-class="active">会员中心</router-link>
         </nav>
