@@ -21,8 +21,58 @@ interface AIItem {
   tenderee?: string
   budget?: string
   region_name?: string
+  notice_type?: string
+  snippet?: string
 }
 const items = ref<AIItem[]>([])
+
+// 转译结果 / 检索诊断（chips、放宽提示、空结果诊断态）
+const translated = ref<any>(null)
+const diagnostics = ref<any>(null)
+const dateRelaxed = ref(false)
+
+const MID = 60
+// 首条辅助分数（60~74）的下标：用于在它前面插入分档分隔线
+const firstMidIndex = computed(() => items.value.findIndex(i => i.score < 75))
+
+const conditionChips = computed(() => {
+  const t = translated.value
+  if (!t) return []
+  const chips: string[] = []
+  if (t.keywords?.length) chips.push(...t.keywords)
+  if (t.region_name) chips.push(t.region_name)
+  if (t.date_from || t.date_to) {
+    chips.push(`${t.date_from || '不限'} ~ ${t.date_to || '不限'}`)
+  }
+  if (t.notice_type) chips.push(t.notice_type)
+  if (t.procure_type) chips.push(t.procure_type)
+  if (t.budget_max != null) chips.push(`预算 ≤ ${t.budget_max} 万`)
+  if (t.budget_min != null) chips.push(`预算 ≥ ${t.budget_min} 万`)
+  return chips
+})
+
+const emptyDesc = computed(() => {
+  const d = diagnostics.value
+  if (!d) return '没有找到相关标讯，换个说法试试'
+  const range = d.library_date_range ? `（库内标讯时间范围：${d.library_date_range}）` : ''
+  if (d.candidate_count === 0) {
+    return `知识库未检索到相关候选${range}，试试更宽泛的说法或去掉时间/地区限制`
+  }
+  return `检索到 ${d.candidate_count} 条候选，但最高只有 ${d.top_score} 分，未达展示线${range}。换个说法试试`
+})
+
+const diagModeText = computed(() => {
+  const m = diagnostics.value?.match_mode as string
+  const map: Record<string, string> = {
+    ft_and: '全文检索（全部词命中）',
+    ft_or: '全文检索',
+    ft_or_exp: '全文检索（含同义词扩展）',
+    like_and: '关键词匹配',
+    like_or: '关键词匹配（兜底）',
+    latest: '最新发布',
+  }
+  return (m && map[m]) || m || '-'
+})
 
 // ===== AI 检索（付费会员专属：未登录 401 / 非付费 403 → 提示开通会员） =====
 async function doAiSearch() {
@@ -31,6 +81,9 @@ async function doAiSearch() {
   loading.value = true
   hasSearched.value = false
   items.value = []
+  translated.value = null
+  diagnostics.value = null
+  dateRelaxed.value = false
   try {
     const token = localStorage.getItem('token')
     const res = await axios.post(`${import.meta.env.VITE_API_BASE || ''}/api/v1/ai/search`,
@@ -41,9 +94,13 @@ async function doAiSearch() {
       })
     hasSearched.value = true
     if (res.data.code === 0) {
-      items.value = res.data.data.items || []
+      const data = res.data.data || {}
+      items.value = data.items || []
+      translated.value = data.translated || null
+      diagnostics.value = data.diagnostics || null
+      dateRelaxed.value = !!data.date_relaxed
       if (items.value.length === 0) {
-        ElMessage.info('没有找到评分高于 75 分的相关标讯，换个说法试试')
+        ElMessage.info('没有找到达到展示分数的相关标讯，换个说法试试')
       }
     } else {
       ElMessage.error(res.data.message || '检索失败')
@@ -69,11 +126,11 @@ async function doAiSearch() {
   }
 }
 
-// 首页 AI 搜索框跳转过来时带 q 参数，自动检索
+// 首页 AI 搜索框跳转带 q 参数、顶栏跳转带 kw 参数，任一存在即自动检索
 onMounted(() => {
-  const q = route.query.q
-  if (typeof q === 'string' && q.trim()) {
-    query.value = q.trim()
+  const raw = route.query.q ?? route.query.kw
+  if (typeof raw === 'string' && raw.trim()) {
+    query.value = raw.trim()
     doAiSearch()
   }
 })
@@ -103,7 +160,7 @@ onMounted(async () => {
       <div class="page-head">
         <span class="section-kicker">AI SEMANTIC SEARCH</span>
         <h1>智能检索</h1>
-        <p>描述需求 → AI 转译检索 → 相关性评分，只展示 75 分以上的结果</p>
+        <p>描述需求 → AI 转译 → 全文检索 + 语义评分，75+ 高相关、60~74 辅助展示</p>
       </div>
 
       <el-card shadow="never" class="main-card tech-card">
@@ -123,51 +180,73 @@ onMounted(async () => {
               </el-button>
             </template>
           </el-input>
-          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 检索结果按相关性评分，75 分以下不展示</div>
+          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 75 分以上高度相关，60~74 分辅助展示</div>
         </div>
 
         <!-- 加载中 -->
         <div v-if="loading" class="loading-area">
           <div class="ai-loader"><span></span><span></span><span></span></div>
           <p>AI 正在理解你的需求并检索知识库…</p>
-          <p class="loading-sub">转译 → 候选检索 → 语义打分，约 5~30 秒</p>
+          <p class="loading-sub">转译 → 候选召回 → 语义打分，约 5~30 秒</p>
         </div>
 
         <!-- 结果列表 -->
         <div v-else-if="items.length > 0" class="results">
-          <div class="result-meta"><el-icon><DataLine /></el-icon> 共 {{ items.length }} 条评分 75+ 的相关标讯</div>
-          <div
-            v-for="item in items"
-            :key="item.id"
-            class="result-card"
-            @click="viewDetail(item.id)"
-          >
-            <div class="score-badge">
-              <div class="score-num">{{ item.score }}</div>
-              <div class="score-label">AI 评分</div>
-            </div>
-            <div class="result-main">
-              <div class="result-title">{{ item.title }}</div>
-              <div class="result-reason">
-                <el-tag size="small" type="success" effect="dark">高相关</el-tag>
-                <span class="reason-text">{{ item.reason }}</span>
-              </div>
-              <div class="result-meta-line">
-                <span v-if="item.tenderee"><el-icon><OfficeBuilding /></el-icon> {{ item.tenderee }}</span>
-                <span v-if="item.region_name"><el-icon><Location /></el-icon> {{ item.region_name }}</span>
-                <span v-if="item.budget"><el-icon><Wallet /></el-icon> {{ item.budget }}</span>
-                <span v-if="item.publish_time"><el-icon><Calendar /></el-icon> {{ item.publish_time.slice(0, 10) }}</span>
-              </div>
-            </div>
-            <el-icon class="result-arrow"><ArrowRight /></el-icon>
+          <div class="result-meta"><el-icon><DataLine /></el-icon> 共 {{ items.length }} 条（高相关 {{ items.filter(i => i.score >= 75).length }} · 辅助 {{ items.filter(i => i.score < 75).length }}）</div>
+
+          <!-- AI 识别出的检索条件 -->
+          <div v-if="conditionChips.length" class="condition-chips">
+            <span class="chips-label">AI 识别：</span>
+            <el-tag v-for="(c, i) in conditionChips" :key="i" size="small" effect="plain">{{ c }}</el-tag>
           </div>
+          <el-alert
+            v-if="dateRelaxed"
+            title="知识库中该时间段没有命中结果，已自动放宽时间条件，以下结果按相关性排序"
+            type="info" :closable="false" show-icon class="relax-alert"
+          />
+          <div v-if="diagnostics" class="diag-line">召回：{{ diagModeText }} · 候选 {{ diagnostics.candidate_count }} 条{{ diagnostics.budget_dropped ? ` · 预算外剔除 ${diagnostics.budget_dropped} 条` : '' }}</div>
+
+          <template v-for="(item, index) in items" :key="item.id">
+            <!-- 分档分隔线：进入 60~74 辅助段时插入 -->
+            <div v-if="index === firstMidIndex" class="tier-divider">
+              <span class="tier-divider-text">以下为辅助推荐（60~74 分，可能不完全匹配）</span>
+            </div>
+            <div class="result-card" @click="viewDetail(item.id)">
+              <div class="score-badge" :class="{ mid: item.score < 75 }">
+                <div class="score-num">{{ item.score }}</div>
+                <div class="score-label">AI 评分</div>
+              </div>
+              <div class="result-main">
+                <div class="result-title">{{ item.title }}</div>
+                <div class="result-reason">
+                  <el-tag size="small" :type="item.score >= 75 ? 'success' : 'info'" effect="dark">
+                    {{ item.score >= 75 ? '高相关' : '相关推荐' }}
+                  </el-tag>
+                  <span class="reason-text">{{ item.reason }}</span>
+                </div>
+                <div v-if="item.snippet" class="result-snippet">{{ item.snippet.slice(0, 160) }}</div>
+                <div class="result-meta-line">
+                  <span v-if="item.notice_type"><el-icon><Tickets /></el-icon> {{ item.notice_type }}</span>
+                  <span v-if="item.tenderee"><el-icon><OfficeBuilding /></el-icon> {{ item.tenderee }}</span>
+                  <span v-if="item.region_name"><el-icon><Location /></el-icon> {{ item.region_name }}</span>
+                  <span v-if="item.budget"><el-icon><Wallet /></el-icon> {{ item.budget }}</span>
+                  <span v-if="item.publish_time"><el-icon><Calendar /></el-icon> {{ item.publish_time.slice(0, 10) }}</span>
+                </div>
+              </div>
+              <el-icon class="result-arrow"><ArrowRight /></el-icon>
+            </div>
+          </template>
         </div>
 
-        <!-- 空状态 -->
-        <el-empty
-          v-else-if="hasSearched"
-          description="没有找到评分高于 75 分的相关标讯，换个说法试试"
-        />
+        <!-- 空状态（带诊断信息） -->
+        <div v-else-if="hasSearched" class="empty-area">
+          <el-empty :description="emptyDesc" />
+          <div v-if="diagnostics" class="empty-diag">
+            召回方式：{{ diagModeText }} · 候选 {{ diagnostics.candidate_count }} 条 · 最高分 {{ diagnostics.top_score }}
+            <template v-if="diagnostics.dropped_short?.length"> · 过短词已跳过：{{ diagnostics.dropped_short.join('、') }}</template>
+          </div>
+          <el-button type="primary" plain size="small" @click="goSearch" class="empty-cta">去高级检索（多条件筛选）</el-button>
+        </div>
       </el-card>
 
       <!-- 最近浏览 -->
@@ -266,6 +345,27 @@ onMounted(async () => {
 .result-meta-line span { display: inline-flex; align-items: center; gap: 4px; }
 .result-arrow { color: var(--line-strong); font-size: 18px; flex: none; margin-top: 20px; transition: all 0.3s var(--ease); }
 .result-card:hover .result-arrow { color: var(--accent); transform: translateX(3px); }
+
+/* ===== 阶段3：条件 chips / 放宽提示 / 诊断 / 分档 ===== */
+.condition-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.chips-label { font-size: 12px; color: var(--ink-500); flex: none; }
+.relax-alert { margin-bottom: 10px; }
+.diag-line { font-size: 12px; color: var(--ink-400); margin-bottom: 12px; }
+.tier-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
+.tier-divider::before, .tier-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.tier-divider-text { font-size: 12px; color: var(--ink-400); flex: none; }
+.score-badge.mid {
+  background: var(--surface-muted);
+  border-color: var(--line);
+}
+.score-badge.mid .score-num { color: var(--ink-600, var(--ink-500)); }
+.result-snippet {
+  font-size: 12px; color: var(--ink-500); line-height: 1.6; margin-bottom: 10px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.empty-area { text-align: center; padding: 8px 0 4px; }
+.empty-diag { font-size: 12px; color: var(--ink-400); margin: -8px 0 14px; }
+.empty-cta { margin-bottom: 12px; }
 
 .recent-card { margin-top: 20px; }
 .recent-list { display: flex; flex-direction: column; }
