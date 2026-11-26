@@ -170,12 +170,15 @@ async function doAiSearch() {
             confirmButtonText: '查看会员套餐',
             cancelButtonText: '登录',
             showCancelButton: true,
+            distinguishCancelAndClose: true,
             center: true,
-            onCancel: () => router.push('/login'),
           },
         )
         router.push('/member')
-      } catch { /* 用户取消 */ }
+      } catch (action) {
+        // 「登录」按钮 = cancel；右上角 X = close（不跳转）
+        if (action === 'cancel') router.push('/login')
+      }
     } else if (status === 400) {
       ElMessage.error('检索内容不能为空')
     } else {
