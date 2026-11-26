@@ -35,40 +35,68 @@ def search(
     return ApiResponse.ok(result)
 
 
-# ============ P2: 多轮 AI 助手 ============
+# ============ P2: 多轮 AI 助手（AI 悬浮球） ============
 
 class ChatMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
 
 class ChatIn(BaseModel):
-    messages: List[ChatMessage]  # 历史对话
+    messages: List[ChatMessage]  # 历史对话（前端携带，上限由记忆窗口按字符预算裁剪）
     inject_context: bool = True   # 是否注入最新标讯上下文
 
 
-@router.post("/chat", summary="多轮 AI 助手对话")
+def _chat_rate_limit(user_id: int) -> None:
+    """每会员每日对话条数频控（Redis 计数，超限 429）。
+    Redis 异常时放行（可用性优先），只记 warning。"""
+    from datetime import datetime
+    from app.config import settings
+    limit = settings.chat_daily_limit
+    if limit <= 0:
+        return
+    try:
+        from app.redis_client import get_redis
+        r = get_redis()
+        key = f"ai_chat:limit:{user_id}:{datetime.now():%Y%m%d}"
+        n = r.incr(key)
+        if n == 1:
+            r.expire(key, 86400)
+        if n > limit:
+            raise HTTPException(
+                status_code=429,
+                detail=f"今日 AI 对话次数已达上限（{limit} 条），请明天再来",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("[ai_chat] 频控 Redis 异常，放行: %s", e)
+
+
+@router.post("/chat", summary="多轮 AI 助手对话（付费会员可用）")
 async def chat(
     req: ChatIn,
-    current_user: Optional[SysUser] = Depends(get_current_user_optional),
+    current_user: SysUser = Depends(require_member(min_level=2)),
 ):
     """
-    P2 新功能：多轮 AI 助手。
-    - 系统提示词硬限定：AI 只有**只读查询权限**
-    - 自动注入最新标讯数据库上下文，减少幻觉
-    - 未登录也能用，登录用户可加个性化
+    P2 AI 悬浮球：多轮长对话助手（与 AI 检索同级会员门槛）。
+    - 四段管道：记忆窗口 → 意图分流 → 分支执行（工具 ≤3 轮）→ 输出（见 ai_chat.py）
+    - 只读工具：search_bids / count_bids / get_bid_detail，不写库
+    - 每会员每日 chat_daily_limit 条频控（Redis），超限 429
+    - 未登录 401 / 非付费会员 403，前端据此提示开通会员
     """
-    # 只保留 user/assistant，过滤掉奇怪的 role
+    # 只保留 user/assistant，过滤掉奇怪的 role（历史裁剪交给 ai_chat 记忆窗口）
     cleaned = [
         {"role": m.role if m.role in ("user", "assistant") else "user", "content": m.content}
         for m in req.messages
     ]
     if not cleaned:
         raise HTTPException(status_code=400, detail="messages 不能为空")
-    if len(cleaned) > 20:
-        cleaned = cleaned[-20:]  # 最多保留最近 20 条，避免超限
 
-    reply = await ai_chat(cleaned, inject_context=req.inject_context)
-    return ApiResponse(code=0, data={"reply": reply}, message="ok")
+    _chat_rate_limit(current_user.id)
+
+    result = await ai_chat(cleaned, inject_context=req.inject_context)
+    return ApiResponse.ok(result)
 
 
 # ============ AI 智能匹配（P1 已有，接 API 后切 LLM） ============
@@ -101,4 +129,5 @@ async def ai_match_config():
         "deepseek_model": settings.deepseek_model,
         "fallback_to_local": True,
         "chat_enabled": True,   # 多轮 AI 助手是否可用
+        "chat_daily_limit": settings.chat_daily_limit,  # 每会员每日对话条数（悬浮球展示余量用）
     }, message="ok")

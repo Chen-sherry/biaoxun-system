@@ -1,117 +1,462 @@
 # -*- coding: utf-8 -*-
 """
-DeepSeek 多轮 AI 助手（P2 新功能）
+DeepSeek 多轮 AI 助手（P2 AI 悬浮球）
+======================================
+对话流程（借鉴 Dify Chatflow 编排，自行实现，四段管道）：
+  ① 记忆窗口：历史按字符预算组装（≤24000 字、至少保留最近 60 条，超预算丢最旧）
+  ② 意图分类：规则快判 检索/统计/通用（0 成本 0 延迟；只优化路径不设死门槛，
+     误判由 function calling 兜底——所有分支都带工具）
+  ③ 分支执行：检索/统计分支注入标讯上下文 + 工具；通用分支不注入上下文
+     （省 token、防"闲聊带 30 条标题"错位），工具循环上限 3 轮
+  ④ 输出：reply（Markdown）+ results（检索卡片数据）+ tool_calls + truncated
 
-核心约束：**AI 只有查询权限**，不能改数据、不能改系统设置。
-系统提示词硬性限定：只能回答"查询标讯相关"的问题，其他一律拒绝。
+工具（只读，不写库）：
+  search_bids   —— ai_search 大白话检索 Top10
+  count_bids    —— 按关键词/地区/天数统计条数（status=1，FT/LIKE 口径）
+  get_bid_detail—— 单条标讯详情（不取 content_text 大列）
 
-依赖：DEEPSEEK_API_KEY 配在 .env（**你自己粘贴，我不写进文件**）
-未配置时返回明确提示。
+硬边界：不创建/修改/删除数据、不执行代码/SQL、不泄密、不编造库内数据。
+DeepSeek 不可用时返回可读提示，不抛 500。
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
-from app.database import SessionLocal
-from app.models.bid import BidInfo
+from app.services.llm import achat, LLMError
+from app.services.ai_search import ai_search, _ft_columns, build_ft_query
 
 logger = logging.getLogger(__name__)
 
+# ---- 记忆窗口（①）----
+HISTORY_CHAR_BUDGET = 24000   # 历史总字符预算（约 6~8k token）
+HISTORY_MIN_KEEP = 60         # 至少保留最近 N 条（预算内也保证长对话不硬断）
 
-# =====================================================
-# 系统提示词：**硬约束 AI 行为边界**
-# =====================================================
+# ---- 工具循环（③）----
+TOOL_ROUNDS = 3               # 工具轮上限
+TOTAL_DEADLINE_S = 60         # 单次对话总时长预算
+MAX_TOKENS = 2000             # 单次回复上限（长对话总结更完整）
 
-CHAT_SYSTEM_PROMPT = """你是一个「标讯查询助手」，仅能帮助用户查询和解释标讯相关数据。
+# ---- 意图分类词表（②）----
+COUNT_TRIGGERS = ("多少条", "几条", "统计", "数量", "新增多少", "共有多少",
+                  "总共", "总数", "多少个")
+SEARCH_TRIGGERS = ("找", "查", "检索", "搜", "有哪些", "哪些", "招标", "投标",
+                   "中标", "采购", "询价", "标讯", "公告", "供应商",
+                   "预算", "中标人", "采购人")
+BID_WORDS = ("标讯", "招标", "投标", "中标", "采购", "公告", "询价", "供应商")
 
-⚠️  你的权限严格限定为「只读查询」，禁止任何写入操作。
 
-你能做的：
-1. 查询某个地区/关键词/类型的标讯
-2. 解释某条标讯的内容、截止时间、中标情况
-3. 统计近 N 天新增多少条标讯
-4. 回答"XX 类标讯最近有哪些"这类问题
-5. 根据用户的订阅习惯推荐相关标讯
-6. 解释"采购公告"、"招标公告"、"成交公告"的区别
+# ================================================================== #
+#  系统提示词（拍板⑥：标讯为主业，通用问题也能答；硬边界只留安全项）
+# ================================================================== #
 
-你绝对**不能**做的：
-1. 创建、修改、删除任何标讯、用户、权限
-2. 执行爬虫、触发推送、修改系统设置
-3. 回答与"标讯/招投标/政府采购"完全无关的问题
-4. 索要或处理任何密码、密钥、token 等敏感信息
-5. 执行任何代码、命令、SQL
+CHAT_SYSTEM_PROMPT = """你是「标讯助手」，服务标讯系统（招投标公告库）的用户：主业标讯，兼答通用问题。
 
-回答风格：
-- 简洁直接，先给结论再解释
-- 列数据时用列表，数字用粗体
-- 涉及具体标讯时，附上简要标题和发布时间
-- 如果用户的问题超出了标讯范围，礼貌拒绝并说明你是"标讯查询助手"
+【主业：标讯能力】
+1. 查询标讯：按地区/关键词/公告类型/时间/预算检索、列举、统计（需要真实数据时调用工具）
+2. 解释标讯：解读某条公告的内容、截止时间、中标情况、金额
+3. 招投标知识：招标公告/中标公告/采购公告/询价公告的区别，招投标流程、保证金、评标办法、政府采购与企业采购差异等专业问题
+4. 分析问题：结合库内数据回答"最近哪些地区在采医院设备"这类分析问题
+
+【通用问答】
+- 招投标/采购/政采相关的延伸问题优先详细回答
+- 其他通用问题（常识、政策背景、写作、计算等）正常回答：简洁直接、先结论后解释
+- 用列表呈现多条数据，关键数字加粗
+
+【回答格式】
+- 使用 Markdown；多条数据用无序列表；数字用 **加粗**
+- 涉及具体标讯时附标题和发布时间
+- 检索结果用列表呈现，并提示可在列表中点击查看公告详情
+
+【工具使用】
+- 只有当问题涉及标讯库的真实数据（检索、统计、单条详情）时才调用工具；通用闲聊和知识问答不要调用工具
+- search_bids：按自然语言条件检索标讯，返回最相关的结果
+- count_bids：统计符合条件的标讯条数（关键词/地区/最近 N 天）
+- get_bid_detail：按 id 获取单条标讯详情
+- 工具返回的结果就是事实，直接引用，不要编造库内数据
+
+【硬边界】（必须遵守）
+1. 只读：不创建/修改/删除任何数据，不触发爬虫、推送、系统设置
+2. 不执行代码、命令、SQL；不索要或泄露密码、密钥、token
+3. 库内查询类问题以工具返回为准；不确定的数据明确说"没有查到"，不要编造
 """
 
 
-# =====================================================
-# 把"最新标讯数据"注入上下文（让 AI 参考数据库内容回答）
-# =====================================================
+# ================================================================== #
+#  ① 记忆窗口：按字符预算裁剪历史
+# ================================================================== #
 
-def _get_context_snippet(max_bids: int = 30) -> str:
-    """取最新一批标讯做上下文注入，避免 AI 幻觉。"""
+def trim_history(messages: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], bool]:
+    """超预算从最旧丢，但至少保留最近 HISTORY_MIN_KEEP 条。
+    返回 (裁剪后历史, 是否发生过截断)。"""
+    if not messages:
+        return [], False
+    total = sum(len(m.get("content") or "") for m in messages)
+    n = len(messages)
+    keep_from = 0
+    # 保留至少 HISTORY_MIN_KEEP 条；在此前提下超预算才丢最旧
+    while keep_from < n - HISTORY_MIN_KEEP and total > HISTORY_CHAR_BUDGET:
+        total -= len(messages[keep_from].get("content") or "")
+        keep_from += 1
+    return messages[keep_from:], keep_from > 0
+
+
+# ================================================================== #
+#  ② 意图分类：规则快判（只优化路径，不设死门槛）
+# ================================================================== #
+
+def classify_intent(text: str) -> str:
+    """返回 count | search | general。误判无害：所有分支都带工具兜底。"""
+    if any(w in text for w in COUNT_TRIGGERS):
+        return "count"
+    if any(w in text for w in SEARCH_TRIGGERS):
+        return "search"
+    return "general"
+
+
+def _should_inject_context(intent: str, history: List[Dict[str, str]]) -> bool:
+    """检索/统计分支注入；通用分支看最近消息是否还在聊标讯（追问"只要合肥的"无触发词）。"""
+    if intent in ("search", "count"):
+        return True
+    recent = " ".join((m.get("content") or "") for m in history[-2:])
+    return any(w in recent for w in BID_WORDS)
+
+
+# ================================================================== #
+#  工具定义与实现（只读）
+# ================================================================== #
+
+TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_bids",
+            "description": "按自然语言条件检索标讯公告库，返回最相关的标讯列表（标题/时间/评分/理由）。"
+                           "支持地区、关键词、时间、公告类型、预算等自然语言描述。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string",
+                              "description": "检索条件的完整自然语言描述，如：合肥的学校招标，预算100万以内，最近一个月"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "count_bids",
+            "description": "统计标讯库中符合条件的公告条数（只统计已发布 status=1）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keywords": {"type": "array", "items": {"type": "string"},
+                                 "description": "关键词列表，可为空数组表示不限关键词"},
+                    "region": {"type": "string",
+                               "description": "地区中文名（如 合肥、安徽、广东省），可省略"},
+                    "days": {"type": "integer",
+                             "description": "只统计最近 N 天发布的，省略或 0 表示不限"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_bid_detail",
+            "description": "按标讯 id 获取单条标讯详情（标题/时间/中标/预算等，不含正文）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "description": "标讯 id"},
+                },
+                "required": ["id"],
+            },
+        },
+    },
+]
+
+
+def _resolve_region_code(region: str) -> Optional[str]:
+    """地区中文名 → 区划代码（先精确，再前缀）。找不到返回 None。"""
+    from app.database import SessionLocal
+    from sqlalchemy import text
     db = SessionLocal()
     try:
-        rows = (
-            db.query(BidInfo)
-            .filter(BidInfo.status == 1)
-            .order_by(BidInfo.publish_time.desc())
-            .limit(max_bids)
-            .all()
-        )
-        lines = []
-        for r in rows:
-            t = r.publish_time.strftime("%Y-%m-%d") if r.publish_time else "?"
-            lines.append(f"- [{r.id}] {t} | {r.title[:80]}")
-        return f"【系统最新标讯参考（仅供查询时对照，数据来自数据库）】\n" + "\n".join(lines)
+        row = db.execute(text(
+            "SELECT code FROM dict_region WHERE name = :n OR name LIKE :p "
+            "ORDER BY level LIMIT 1"),
+            {"n": region, "p": f"{region}%"}).first()
+        return row[0] if row else None
+    except Exception:
+        logger.warning("[ai_chat] 地区解析失败 region=%s", region, exc_info=True)
+        return None
     finally:
         db.close()
 
 
-# =====================================================
-# DeepSeek 多轮对话主入口
-# =====================================================
+def _count_bids_db(keywords: Optional[List[str]], region: Optional[str],
+                   days: Optional[int]) -> Dict[str, Any]:
+    """关键词/地区/天数统计（status=1）。FT 优先，短词/索引缺失退 LIKE。"""
+    from app.database import SessionLocal
+    from sqlalchemy import text
+    kws = [str(k).strip() for k in (keywords or []) if str(k).strip()][:6]
+    conds = ["status = 1"]
+    params: Dict[str, Any] = {}
+    if region:
+        rc = _resolve_region_code(region)
+        if rc:
+            conds.append("region_code = :rc")
+            params["rc"] = rc
+    try:
+        d = int(days) if days else 0
+    except (TypeError, ValueError):
+        d = 0
+    if d > 0:
+        conds.append("publish_time >= DATE_SUB(NOW(), INTERVAL :d DAY)")
+        params["d"] = d
+    if kws:
+        cols = _ft_columns()
+        expr = None
+        if cols:
+            expr, _ = build_ft_query(kws, "or")
+        if cols and expr:
+            mc = ", ".join(f"`{c}`" for c in cols)
+            conds.append(f"MATCH({mc}) AGAINST(:ft IN BOOLEAN MODE) > 0")
+            params["ft"] = expr
+        else:
+            likes = " OR ".join(
+                f"(title LIKE :kw{i} OR content_text LIKE :kw{i})"
+                for i in range(len(kws)))
+            conds.append(f"({likes})")
+            for i, kw in enumerate(kws):
+                params[f"kw{i}"] = f"%{kw}%"
+    db = SessionLocal()
+    try:
+        sql = text(f"SELECT COUNT(*) FROM bid_info WHERE {' AND '.join(conds)}")
+        total = int(db.execute(sql, params).scalar() or 0)
+        return {"total": total, "keywords": kws, "region": region or None,
+                "days": d or None}
+    finally:
+        db.close()
+
+
+def _get_bid_detail_db(bid_id: int) -> Dict[str, Any]:
+    """单条标讯详情（不取 content/content_text 大列）。"""
+    from app.database import SessionLocal
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        row = db.execute(text(
+            "SELECT b.id, b.title, b.project_code, b.tenderee, b.agency, "
+            "       b.publish_time, b.deadline, b.budget, b.winner_unit, "
+            "       b.win_amount, b.procure_type, b.customer_group, b.source_url, "
+            "       nt.name AS notice_type, dr.name AS region_name "
+            "FROM bid_info b "
+            "LEFT JOIN dict_notice_type nt ON nt.id = b.notice_type_id "
+            "LEFT JOIN dict_region dr ON dr.code = b.region_code "
+            "WHERE b.id = :id AND b.status = 1"), {"id": bid_id}).first()
+        if not row:
+            return {"error": f"未找到 id={bid_id} 的已发布标讯"}
+        d = dict(row._mapping)
+        for k in ("publish_time", "deadline"):
+            if d.get(k) is not None:
+                d[k] = str(d[k])
+        if d.get("win_amount") is not None:
+            d["win_amount"] = float(d["win_amount"])
+        return d
+    finally:
+        db.close()
+
+
+async def _exec_tool(name: str, args: Dict[str, Any],
+                     results_acc: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """执行单个工具，返回给模型的 JSON 可序列化结果；检索结果同步收集给前端。"""
+    try:
+        if name == "search_bids":
+            query = str(args.get("query") or "").strip()
+            if not query:
+                return {"error": "query 不能为空"}
+            # ai_search 内含 LLM 转译+打分，线程池执行避免阻塞事件循环
+            data = await asyncio.to_thread(ai_search, query, limit=10)
+            items = data.get("items") or []
+            brief = [{
+                "id": it.get("id"),
+                "title": it.get("title"),
+                "publish_time": it.get("publish_time"),
+                "score": it.get("score"),
+                "reason": it.get("reason"),
+                "budget": it.get("budget"),
+                "tenderee": it.get("tenderee"),
+            } for it in items]
+            for b in brief:
+                if len(results_acc) >= 10:
+                    break
+                if all(x.get("id") != b["id"] for x in results_acc):
+                    results_acc.append(b)
+            out: Dict[str, Any] = {"items": brief, "count": len(brief)}
+            if data.get("total_hits") is not None:
+                out["total_hits"] = data.get("total_hits")
+            return out
+        if name == "count_bids":
+            return _count_bids_db(
+                keywords=args.get("keywords"),
+                region=args.get("region"),
+                days=args.get("days"),
+            )
+        if name == "get_bid_detail":
+            try:
+                bid_id = int(args.get("id"))
+            except (TypeError, ValueError):
+                return {"error": "id 必须是整数"}
+            return _get_bid_detail_db(bid_id)
+        return {"error": f"unknown tool {name}"}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ai_chat] 工具执行失败 tool=%s: %s", name, e, exc_info=True)
+        return {"error": f"工具执行失败：{str(e)[:120]}"}
+
+
+# ================================================================== #
+#  主入口：多轮对话（四段管道）
+# ================================================================== #
 
 async def ai_chat(
-    messages: List[dict],          # 用户/助手交替消息：[{"role":"user","content":"..."}, ...]
-    inject_context: bool = True,   # 是否注入最新标讯上下文
-) -> str:
-    """
-    多轮对话：把历史消息 + 系统提示词 + (可选)上下文 → DeepSeek。
+    messages: List[Dict[str, str]],
+    inject_context: bool = True,
+) -> Dict[str, Any]:
+    """多轮 AI 助手对话。返回 {reply, results, tool_calls, truncated}。
+
+    - ① 记忆窗口裁剪历史
+    - ② 规则意图分类
+    - ③ 分支：检索/统计注入标讯上下文；所有分支带工具（误判兜底），循环 ≤3 轮
+    - ④ 结果卡片数据只回传前端，不回历史（省 token；AI 靠文字总结接续追问）
     """
     if not settings.deepseek_api_key:
-        return (
-            "⚠️  **DeepSeek API Key 未配置**，AI 助手暂时无法使用。\n\n"
-            "请在 `.env` 文件里填入 `DEEPSEEK_API_KEY=你的key`，重启后端即可。\n\n"
-            "（为了安全，建议你自己粘贴，不要在聊天里发送密钥）"
-        )
+        return {"reply": "AI 助手未配置 DeepSeek API Key，请联系管理员。",
+                "results": [], "tool_calls": [], "truncated": False}
 
-    # 组装最终 messages：[system, (可选 context), ...history]
-    final_messages: List[dict] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    # ① 记忆窗口
+    history, truncated = trim_history(messages)
 
-    if inject_context:
-        ctx = _get_context_snippet()
-        final_messages.append({"role": "system", "content": ctx})
+    # ② 意图分类（取最后一条用户消息）
+    last_user = next(
+        (m.get("content") or "" for m in reversed(history)
+         if m.get("role") == "user"), "")
+    intent = classify_intent(last_user)
 
-    final_messages.extend(messages)
+    # ③ 系统提示词 + （可选）标讯上下文
+    system = CHAT_SYSTEM_PROMPT
+    if inject_context and _should_inject_context(intent, history):
+        system += "\n\n" + _get_context_snippet()
+    llm_messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
+    llm_messages += [{"role": m["role"], "content": m["content"]} for m in history]
+
+    results_acc: List[Dict[str, Any]] = []
+    tool_calls_log: List[str] = []
+    reply: Optional[str] = None
+    deadline = time.time() + TOTAL_DEADLINE_S
 
     try:
-        from app.services.llm import achat, LLMError
-        result = await achat(final_messages, temperature=0.6, max_tokens=1500,
-                             timeout=30.0, tag="chat")
-        logger.info(f"[ai-chat] tokens used: {result.usage}")
-        return result.content
+        for round_i in range(TOOL_ROUNDS + 1):
+            remaining = deadline - time.time()
+            if remaining <= 5:
+                break
+            use_tools = round_i < TOOL_ROUNDS
+            resp = await achat(
+                llm_messages,
+                tools=TOOLS if use_tools else None,
+                max_tokens=MAX_TOKENS,
+                timeout=max(5.0, min(45.0, remaining)),
+                tag="chat",
+            )
+            tool_calls = resp.tool_calls or []
+            if not tool_calls:
+                reply = (resp.content or "").strip()
+                break
+            if not use_tools:
+                # 最后一轮仍要工具：不执行，直接让模型凭已有信息作答（下一轮无工具）
+                reply = (resp.content or "").strip()
+                break
+            # 追加 assistant(tool_calls) 再逐个执行
+            llm_messages.append({
+                "role": "assistant",
+                "content": resp.content,
+                "tool_calls": tool_calls,
+            })
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                name = fn.get("name") or ""
+                tool_calls_log.append(name)
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                if not isinstance(args, dict):
+                    args = {}
+                out = await _exec_tool(name, args, results_acc)
+                llm_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id"),
+                    "content": json.dumps(out, ensure_ascii=False, default=str),
+                })
+            logger.info("[ai_chat] route=%s round=%d tools=%s", intent,
+                        round_i + 1, ",".join(tool_calls_log[-len(tool_calls):]))
+        else:
+            # TOOL_ROUNDS+1 次调用仍未收敛（防御，正常不会走到）
+            reply = "⚠️ 对话轮次过多，请换个更简单的问法。"
+
+        if not reply:
+            if time.time() >= deadline:
+                reply = "⚠️ 本次对话耗时过长，请稍后重试，或把问题拆简单一点。"
+            else:
+                reply = "⚠️ AI 未返回内容，请重试。"
     except LLMError as e:
-        logger.error(f"[ai-chat] LLM error kind={e.kind}: {e}")
-        return f"⚠️ AI 服务返回错误：{str(e)[:80]}"
-    except Exception as e:
-        logger.exception(f"[ai-chat] failed: {e}")
-        return f"⚠️ AI 服务暂时不可用：{str(e)[:80]}"
+        logger.warning("[ai_chat] LLM error kind=%s: %s", e.kind, e)
+        reply = f"AI 暂时不可用：{str(e)[:80]}"
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[ai_chat] 对话异常: %s", e)
+        reply = "AI 服务暂时不可用，请稍后再试。"
+
+    return {
+        "reply": reply,
+        "results": results_acc,
+        "tool_calls": tool_calls_log,
+        "truncated": truncated,
+    }
+
+
+# ================================================================== #
+#  标讯上下文注入（防幻觉：最新 30 条标题，只读）
+# ================================================================== #
+
+def _get_context_snippet() -> str:
+    """取最新 30 条标讯标题/时间/中标人，拼成简短上下文。"""
+    try:
+        from app.database import SessionLocal
+        from sqlalchemy import text
+        db = SessionLocal()
+        try:
+            rows = db.execute(text(
+                "SELECT id, title, publish_time, winner_unit FROM bid_info "
+                "WHERE status = 1 ORDER BY publish_time DESC LIMIT 30"
+            )).fetchall()
+        finally:
+            db.close()
+        lines = []
+        for r in rows:
+            t = str(r[2])[:10] if r[2] else "未知日期"
+            w = f"｜中标：{r[3]}" if r[3] else ""
+            lines.append(f"- [{r[0]}] {r[1]}（{t}）{w}")
+        if not lines:
+            return ""
+        return ("【库内最新标讯（仅参考，真实查询请调用工具）】\n"
+                + "\n".join(lines))
+    except Exception:
+        logger.warning("[ai_chat] 上下文注入失败", exc_info=True)
+        return ""

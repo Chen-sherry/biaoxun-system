@@ -2,6 +2,7 @@
 import { RouterView } from 'vue-router'
 import SiteHeader from '@/components/SiteHeader.vue'
 import SiteFooter from '@/components/SiteFooter.vue'
+import AIBall from '@/components/AIBall.vue'
 </script>
 
 <template>
@@ -11,6 +12,7 @@ import SiteFooter from '@/components/SiteFooter.vue'
       <RouterView />
     </main>
     <SiteFooter />
+    <AIBall />
   </div>
 </template>
 
