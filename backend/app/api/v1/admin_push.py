@@ -119,10 +119,16 @@ def list_variables(db: Session = Depends(get_db),
          "desc": "推送执行当天的日期"},
         {"code": "count", "name": "数量统计", "example": "32",
          "scope": "所有模板",
-         "desc": "每日=近24小时新增标讯数；到期预警=24小时内到期数；归档=本次归档数；自定义=近24小时新增数"},
+         "desc": "每日=近24小时新增标讯数；每日问好=昨日(00:00~24:00)新增数；到期预警=24小时内到期数；归档=本次归档数；自定义=近24小时新增数"},
         {"code": "bid_list", "name": "标讯结构化列表", "example": "标题：xxx\n单位：xxx\n金额：xxx　截止时间：xxx\n分类：xxx\n[查看详情](链接)",
          "scope": "每日/到期/归档/自定义",
          "desc": "标讯卡片（标题/单位/金额/截止时间/分类/查看详情），有什么字段显示什么；每日取最新3条，到期取最先到期5条，归档取本次归档5条，自定义取最新3条"},
+        {"code": "greet_time", "name": "执行时刻", "example": "11-27 08:00",
+         "scope": "每日问好",
+         "desc": "推送执行当天的时刻（MM-DD HH:MM），如 11-27 08:00"},
+        {"code": "type_counts", "name": "昨日分类统计", "example": "招标 · 88 条\n中标 · 54 条\n其他 · 14 条",
+         "scope": "每日问好",
+         "desc": "昨日（00:00~24:00）新增标讯按公告类型分组计数，每类一行；各行之和=昨日新增总数"},
     ])
 
 
@@ -197,6 +203,11 @@ def _build_real_vars(db: Session, code: str) -> dict:
 
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if code == "daily_greeting":
+        # 每日问好：与 send_daily_greeting 任务共用同一实现
+        from app.services.push_template_service import build_greeting_vars
+        return build_greeting_vars(db)
 
     if code == "expiring_alert":
         from app.services.push_template_service import query_bids_with_type, format_bids_rows

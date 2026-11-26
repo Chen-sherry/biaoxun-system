@@ -34,6 +34,11 @@ celery_app.conf.update(
             "task": "app.tasks.push_tasks.push_daily_subscriptions",
             "schedule": crontab(minute="*/5"),
         },
+        # 每日问好（08:00，模板 daily_greeting）
+        "daily-greeting-check": {
+            "task": "app.tasks.push_tasks.send_daily_greeting",
+            "schedule": crontab(minute="*/5"),
+        },
         "expiry-summary-check": {
             "task": "app.tasks.push_tasks.send_expiring_bid_daily",
             "schedule": crontab(minute="*/5"),

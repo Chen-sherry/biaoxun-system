@@ -93,6 +93,28 @@ def push_daily_subscriptions():
 
 
 # ============================================================
+# 每天 08:00 每日问好（问候 + 昨日新增分类统计）
+# ============================================================
+
+@celery_app.task(name="app.tasks.push_tasks.send_daily_greeting")
+def send_daily_greeting():
+    from app.database import SessionLocal
+    from app.services.push_template_service import build_greeting_vars
+
+    db = SessionLocal()
+    try:
+        tpl, _target = _due_gate(db, "daily_greeting")
+        if not tpl:
+            return {"pushed": False, "reason": "not_due_or_disabled"}
+        return _send(db, code="daily_greeting", variables=build_greeting_vars(db))
+    except Exception as e:
+        logger.exception(f"[push] daily greeting failed: {e}")
+        return {"pushed": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+# ============================================================
 # 每天 09:00 到期预警（改造为读库渲染）
 # ============================================================
 

@@ -186,6 +186,7 @@ DEFAULT_SCHEDULE = {
     "daily_summary": "08:00",
     "expiring_alert": "09:00",
     "archive_notice": "02:00",
+    "daily_greeting": "08:00",
 }
 # 到点判定窗口（分钟）：beat 每 5 分钟触发一次，窗口内任一次命中即执行一次
 DUE_WINDOW_MINUTES = 15
@@ -241,17 +242,14 @@ def format_bids_rows(rows) -> str:
     for idx, (b, nt) in enumerate(rows, start=1):
         title = (b.title or '').strip()[:60]
         lines = [f"> **{idx:02d}｜** {title}"]
-        fields = []
         if b.tenderee:
-            fields.append(f"单位 · {b.tenderee}")
+            lines.append(f"> 单位 · {b.tenderee}")
         if b.budget:
-            fields.append(f"金额 · <font color=\"warning\">{b.budget}</font>")
+            lines.append(f"> 金额 · <font color=\"warning\">{b.budget}</font>")
         if b.deadline:
-            fields.append(f"截止 · <font color=\"warning\">{b.deadline.strftime('%Y-%m-%d %H:%M')}</font>")
+            lines.append(f"> 截止 · <font color=\"warning\">{b.deadline.strftime('%Y-%m-%d %H:%M')}</font>")
         if nt:
-            fields.append(f"分类 · <font color=\"info\">{nt}</font>")
-        if fields:
-            lines.append("> " + "　".join(fields))
+            lines.append(f"> 分类 · <font color=\"info\">{nt}</font>")
         if b.source_url:
             lines.append(f"> [查看详情 →]({b.source_url})")
         blocks.append("\n".join(lines))
@@ -283,6 +281,34 @@ def count_recent(hours: int = 24) -> int:
             BidInfo.notice_type_id.isnot(None)).count()  # 未提取的不发
     finally:
         db.close()
+
+
+def build_greeting_vars(db) -> dict:
+    """每日问好模板变量（任务与预览共用）：
+    greet_time=执行时刻 MM-DD HH:MM；count=昨日(00:00~24:00)新增总数；
+    type_counts=昨日新增按公告类型分组计数，每类一行（总数与分类之和一致）。
+    """
+    from app.models.bid import BidInfo
+    from app.models.dict import DictNoticeType
+    from sqlalchemy import func
+
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    y_start = today_start - timedelta(days=1)
+    rows = (db.query(DictNoticeType.name, func.count(BidInfo.id))
+            .select_from(BidInfo)
+            .join(DictNoticeType, DictNoticeType.id == BidInfo.notice_type_id, isouter=True)
+            .filter(BidInfo.status == 1, BidInfo.notice_type_id.isnot(None),
+                    BidInfo.created_at >= y_start, BidInfo.created_at < today_start)
+            .group_by(DictNoticeType.name)
+            .order_by(func.count(BidInfo.id).desc())
+            .all())
+    total = sum(c for _, c in rows)
+    type_counts = "\n".join(f"> {name or '未分类'} · {c} 条" for name, c in rows) \
+        or "> 暂无新增"
+    return {"greet_time": now.strftime("%m-%d %H:%M"),
+            "count": str(total),
+            "type_counts": type_counts}
 
 
 def build_latest_bids_list(db, limit: int = 3) -> str:
