@@ -354,17 +354,18 @@ onMounted(async () => {
 .card-header { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; }
 
 .search-area { margin-bottom: 20px; }
-.search-area :deep(.el-input-group) { align-items: stretch; }
+/* 搜索框与按钮分离：四角统一圆角，避免左直角右圆角 */
+.search-area :deep(.el-input-group) { align-items: stretch; gap: 10px; }
 .search-area :deep(.el-input__wrapper) {
-  height: 52px; border-radius: 12px 0 0 12px;
+  height: 52px; border-radius: 12px !important;
 }
 .search-area :deep(.el-input-group__append) {
   padding: 0 !important; display: flex; overflow: hidden;
-  border-radius: 0 12px 12px 0;
+  border-radius: 12px !important;
 }
 .search-area :deep(.el-input-group__append .el-button) {
   height: auto; align-self: stretch; margin: 0; padding: 0 24px;
-  border: none; border-radius: 0; font-weight: 600; font-size: 15px;
+  border: none; border-radius: 12px; font-weight: 600; font-size: 15px;
 }
 .hint { font-size: 12px; color: var(--ink-500); margin-top: 10px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 5px; }
 .hint :deep(.el-icon) { color: var(--accent-strong); }

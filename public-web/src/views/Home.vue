@@ -268,7 +268,7 @@ onUnmounted(() => {
 .ai-search-box :deep(.el-input__wrapper) {
   height: 54px; background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4) inset, 0 12px 32px rgba(0, 0, 0, 0.2) !important;
-  border-radius: 12px;
+  border-radius: 12px !important;
 }
 .ai-search-box :deep(.el-input-group__append) {
   background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep)) !important;
