@@ -20,11 +20,18 @@
         <el-descriptions-item label="项目编号">{{ detail.project_code || '—' }}</el-descriptions-item>
         <el-descriptions-item label="采购人">{{ detail.tenderee || '—' }}</el-descriptions-item>
         <el-descriptions-item label="地区">{{ detail.region_name || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="投标截止">{{ formatTime(detail.deadline) || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="预算">{{ detail.budget || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="中标单位">{{ winnerText(detail.winner_unit) }}</el-descriptions-item>
-        <el-descriptions-item label="中标金额">{{ detail.win_amount ? '¥' + detail.win_amount.toLocaleString() : winnerText(null) }}</el-descriptions-item>
-        <el-descriptions-item label="中标时间">{{ formatTime(detail.winner_publish_time) || winnerText(null) }}</el-descriptions-item>
+        <!-- 招标类模板：投标截止 / 预算，不显示中标字段 -->
+        <template v-if="!isResultType">
+          <el-descriptions-item label="投标截止">{{ formatTime(detail.deadline) || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="预算">{{ detail.budget && Number(detail.budget) > 0 ? detail.budget : '—' }}</el-descriptions-item>
+        </template>
+        <!-- 中标/成交类模板：中标单位 / 中标金额 / 中标时间，不显示投标截止 -->
+        <template v-else>
+          <el-descriptions-item label="中标单位">{{ detail.winner_unit || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="中标金额">{{ detail.win_amount ? '¥' + detail.win_amount.toLocaleString() : '—' }}</el-descriptions-item>
+          <el-descriptions-item label="中标时间">{{ formatTime(detail.winner_publish_time) || '—' }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.budget && Number(detail.budget) > 0" label="预算">{{ detail.budget }}</el-descriptions-item>
+        </template>
         <el-descriptions-item label="客群">{{ detail.customer_group || '—' }}</el-descriptions-item>
         <el-descriptions-item label="行业">{{ detail.industry_name || '—' }}</el-descriptions-item>
       </el-descriptions>
@@ -44,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Calendar, Location, View, Document, Files, TopRight } from '@element-plus/icons-vue'
 import { fetchPublicBidDetail } from '@/api'
@@ -59,14 +66,9 @@ function onResize() { descColumn.value = window.innerWidth < 768 ? 1 : 2 }
 
 function formatTime(t: any) { return t ? String(t).replace('T',' ').slice(0,19) : '' }
 
-// 尚未开标的公告类型：中标信息本来就不存在，显示「未开标」而不是「—」
-const PRE_AWARD_TYPES = ['招标公告', '采购公告', '邀请招标', '竞争性磋商公告', '竞争性谈判公告',
-  '询价公告', '单一来源公示', '资格预审公告', '采购意向', '更正公告', '答疑澄清']
-function winnerText(v: any) {
-  if (v) return v
-  const nt = detail.value?.notice_type
-  return nt && PRE_AWARD_TYPES.includes(nt) ? '未开标' : '—'
-}
+// 结果类公告（中标/成交/合同）→ 中标模板；其余 → 招标模板
+const RESULT_TYPES = ['中标公告', '成交公告', '合同公告']
+const isResultType = computed(() => RESULT_TYPES.includes(detail.value?.notice_type || ''))
 
 onMounted(async () => {
   window.addEventListener('resize', onResize)
