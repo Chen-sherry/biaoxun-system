@@ -97,7 +97,7 @@
       <div class="dash-card">
         <div class="dash-head">
           <span class="dash-kicker">TODAY BY TYPE</span>
-          <h3><el-icon><PieChart /></el-icon> 今日新增 · 公告类型 Top4</h3>
+          <h3><el-icon><PieChart /></el-icon> 今日新增 · 公告类型 Top5</h3>
         </div>
         <div class="bar-chart" v-if="todayByType.length">
           <div class="bar-item" v-for="item in todayByType" :key="item.type">
@@ -115,7 +115,7 @@
       <div class="dash-card">
         <div class="dash-head">
           <span class="dash-kicker">REGION TOP 10</span>
-          <h3><el-icon><MapLocation /></el-icon> 本月标讯 · 地区分布</h3>
+          <h3><el-icon><MapLocation /></el-icon> 本月标讯 · 地区 Top5</h3>
         </div>
         <div class="h-bar-chart" v-if="regionTop10.length">
           <div class="h-bar-item" v-for="(item, idx) in regionTop10" :key="item.region">
