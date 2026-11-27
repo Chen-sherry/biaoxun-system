@@ -34,6 +34,9 @@ HIGH_SCORE = 70        # >= 此分：高度相关
 MID_SCORE = 60         # 60~69：较相关，辅助展示；<60 丢弃
 # 相关性四维权重（总分 100）：主题40 / 地区25 / 类型20 / 时间15
 W_TOPIC, W_REGION, W_TYPE, W_TIME = 40, 25, 20, 15
+# 语义向量召回
+SEMANTIC_TOPN = 60        # 每次语义召回的 TopN（与关键词候选求并集）
+SEMANTIC_MIN_SIM = 0.30   # 语义召回最低余弦相似度，低于此不并入
 CANDIDATE_LIMIT = 200  # 召回池上限（DB 粗筛）—— 扩大召回范围
 SCORE_CAP = 100        # 默认送 LLM 打分的候选上限 —— 扩大 LLM 打分范围
 MIN_CANDIDATES = 40    # 单层召回不足此数则继续放宽并累积合并（避免首层非空即停导致召回过少）
@@ -305,7 +308,7 @@ def _notice_type_id(name: str) -> Optional[int]:
         return None
 
 
-def search_candidates(cond: Dict[str, Any]
+def search_candidates(cond: Dict[str, Any], query: str = ""
                       ) -> Tuple[List[Dict[str, Any]], bool, Dict[str, Any]]:
     """按条件粗筛候选。
     
@@ -365,12 +368,16 @@ def search_candidates(cond: Dict[str, Any]
         meta["relax_level"] = "soft"
         candidates = [merged[k] for k in merged]
         meta["layer_counts"] = {m: order.count(m) for m in set(order)}
+        candidates, sem_meta = _augment_with_semantic(candidates, cond, query)
+        meta.update(sem_meta)
         return candidates, False, meta
 
     # 所有策略 0 行 → 最终兜底：纯时间倒序
     rows = _fetch_rows(dict(cond, keywords=[]), _lv, None)
     meta["match_mode"] = "latest"
     meta["relax_level"] = "latest"
+    rows, sem_meta = _augment_with_semantic(rows, cond, query)
+    meta.update(sem_meta)
     return rows, has_date, meta
 
 
@@ -492,6 +499,74 @@ def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
         return [dict(r) for r in rows]
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------- #
+#  3.5 语义向量召回（关键词 ∪ 向量 TopN）
+# ---------------------------------------------------------------- #
+
+def _semantic_enabled() -> bool:
+    """语义召回开关（后台 param.search_semantic_recall，缺省开启）。"""
+    try:
+        return bool(svc.get("param.search_semantic_recall", True))
+    except Exception:
+        return True
+
+
+def _fetch_bids_by_ids(ids: List[int]) -> List[Dict[str, Any]]:
+    """按 id 批量取候选（字段与 _fetch_rows 一致），供语义召回补入关键词缺口。"""
+    if not ids:
+        return []
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        in_clause = ", ".join(f":id{i}" for i in range(len(ids)))
+        params = {f"id{i}": int(v) for i, v in enumerate(ids)}
+        sql = text(f"""
+            SELECT b.id, b.title, b.tenderee, b.agency, b.procure_type,
+                   b.publish_time, b.deadline, b.budget, b.winner_unit,
+                   b.region_code, b.source_url,
+                   COALESCE(r.name, '') AS region_name,
+                   COALESCE(nt.name, '') AS notice_type,
+                   LEFT(COALESCE(b.content_text, ''), 400) AS snippet
+            FROM bid_info b
+            LEFT JOIN dict_region r ON r.code = b.region_code
+            LEFT JOIN dict_notice_type nt ON nt.id = b.notice_type_id
+            WHERE b.status = 1 AND b.id IN ({in_clause})
+        """)
+        rows = db.execute(sql, params).mappings().all()
+        return [dict(r) for r in rows]
+    finally:
+        db.close()
+
+
+def _augment_with_semantic(candidates: List[Dict[str, Any]], cond: Dict[str, Any],
+                           query: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """向量语义召回：取语义 TopN 与关键词候选求并集，并给每条候选挂上 _sim（余弦）。
+    失败/未建库/关闭时静默降级为纯关键词，不影响主流程。"""
+    if not query or not _semantic_enabled():
+        return candidates, {"semantic_enabled": False}
+    try:
+        from app.services import embedding_service as emb
+        cand_ids = [c["id"] for c in candidates]
+        ordered, sim_by_id = emb.semantic_recall(query, SEMANTIC_TOPN, cand_ids)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[ai_search] 语义召回失败，降级关键词: {e}")
+        return candidates, {"semantic_enabled": False}
+    if not ordered:
+        return candidates, {"semantic_enabled": True, "semantic_added": 0}
+
+    ordered = [i for i in ordered if sim_by_id.get(i, 0.0) >= SEMANTIC_MIN_SIM]
+    existing = {c["id"] for c in candidates}
+    for c in candidates:
+        s = sim_by_id.get(c["id"])
+        if s is not None:
+            c["_sim"] = s
+    missing = [i for i in ordered if i not in existing]
+    extra = _fetch_bids_by_ids(missing)
+    for r in extra:
+        r["_sim"] = sim_by_id.get(r["id"], 0.0)
+    return candidates + extra, {"semantic_enabled": True, "semantic_added": len(extra)}
 
 
 # ---------------------------------------------------------------- #
@@ -679,8 +754,25 @@ def score_candidates(query: str, candidates: List[Dict[str, Any]],
 
     cap = score_cap or SCORE_CAP
     if len(candidates) > cap:
-        # 本地关键词粗排，只把最相关的一批送 LLM（使用转译后的 keywords + synonyms）
-        candidates = _local_score(query, candidates, cond)[:cap]
+        if any(c.get("_sim") is not None for c in candidates):
+            # 混合预排：关键词 Top 70% + 语义 TopN 补齐，保证语义召回结果能进 LLM 打分池
+            kw = _local_score(query, candidates, cond)
+            n_kw = max(1, int(cap * 0.7))
+            pool: List[Dict[str, Any]] = []
+            seen: set = set()
+            for c in kw[:n_kw]:
+                pool.append(c)
+                seen.add(c["id"])
+            for c in sorted(candidates, key=lambda x: x.get("_sim", -1), reverse=True):
+                if len(pool) >= cap:
+                    break
+                if c["id"] not in seen:
+                    pool.append(c)
+                    seen.add(c["id"])
+            candidates = pool
+        else:
+            # 本地关键词粗排，只把最相关的一批送 LLM（使用转译后的 keywords + synonyms）
+            candidates = _local_score(query, candidates, cond)[:cap]
 
     date_note = ""
     if date_relaxed:
@@ -833,7 +925,7 @@ def ai_search(query: str, limit: int = 120,
         cond["region_name"] = grp[0]
         cond["region_prefixes"] = grp[1]
         cond["region_code"] = None
-    candidates, date_relaxed, meta = search_candidates(cond)
+    candidates, date_relaxed, meta = search_candidates(cond, query)
     candidates, budget_dropped = _apply_budget_filter(cond, candidates)
     scored, score_diag = score_candidates(query, candidates, date_relaxed=date_relaxed,
                                           cond=cond, score_cap=score_cap)
@@ -849,6 +941,8 @@ def ai_search(query: str, limit: int = 120,
     else:
         items_out = scored[:limit]
         fallback_used = False
+    for _it in items_out:      # 不把内部字段 _sim 暴露给前端
+        _it.pop("_sim", None)
     high_count = sum(1 for s in items_out if s["score"] >= HIGH_SCORE)
     mid_count = sum(1 for s in items_out if MID_SCORE <= s["score"] < HIGH_SCORE)
     lib_range, _ = _lib_date_note()
@@ -875,6 +969,8 @@ def ai_search(query: str, limit: int = 120,
             "library_date_range": lib_range,
             "llm_translate_ok": llm_translate_ok,
             "llm_score_ok": score_diag["llm_score_ok"],
+            "semantic_enabled": bool(meta.get("semantic_enabled")),
+            "semantic_added": meta.get("semantic_added", 0),
         },
     }
     # 写入缓存（TTL 300s）
