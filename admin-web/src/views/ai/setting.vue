@@ -1,160 +1,157 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { TabPane, FormInstance } from 'element-plus'
-import {
-  fetchAISettings, saveAISetting, fetchAISnapshots, rollbackAISetting,
-  testAIConnection, tryAIPrompt,
-} from '@/api'
+import { fetchAISettings, saveAISetting, testAIConnection } from '@/api'
+import { Top, Bottom } from '@element-plus/icons-vue'
 
-// ===== 状态 =====
+// ========== Provider 预设 ==========
+// 选 Provider 自动填 base_url；自定义则全手填
+const PROVIDERS = [
+  { value: 'deepseek', label: 'DeepSeek (深度求索)', base_url: 'https://api.deepseek.com/v1',
+    hint: '推荐：deepseek-chat（通用）/ deepseek-reasoner（推理）' },
+  { value: 'doubao',   label: '豆包 / 火山引擎',     base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+    hint: '模型名填 Endpoint ID，如 ep-xxxxx' },
+  { value: 'qwen',     label: '通义千问 / DashScope', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    hint: 'qwen-plus / qwen-max / qwen-turbo' },
+  { value: 'openrouter', label: 'OpenRouter',        base_url: 'https://openrouter.ai/api/v1',
+    hint: '聚合多模型，API Key 在 openrouter.ai 申请' },
+  { value: 'custom',   label: '自定义（兼容 OpenAI）', base_url: '',
+    hint: '只要接口兼容 /chat/completions 就能接' },
+]
+const providerMeta = (p: string) => PROVIDERS.find(x => x.value === p)
+
+// ========== 场景配置 ==========
+// 4 个 model key，每个独立一张卡片
+const SCENES = [
+  { key: 'model.chat_system',   name: 'AI 悬浮球 / 对话', icon: '💬', tip: '主模型，负责聊天 + 工具调用' },
+  { key: 'model.search',        name: 'AI 检索',         icon: '🔍', tip: '把大白话转成检索条件 + 结果打分' },
+  { key: 'model.push_generate', name: '推送文案 AI',     icon: '📧', tip: '每天给订阅用户生成推送文案' },
+  { key: 'model.extract_ai',    name: '字段补提取 AI',   icon: '📑', tip: '爬虫兜底：补金额/分类/采购人' },
+]
+
+// ========== 状态 ==========
 const loading = ref(false)
-const groups = ref<Record<string, any[]>>({ model: [], prompt: [], param: [] })
-const activeTab = ref<'model' | 'prompt' | 'param' | 'snapshot'>('model')
-
-// 每个 setting 存 draft（value + remark）
-const drafts = ref<Record<string, { value: string; remark: string }>>({})
-function initDraft(rows: any[]) {
-  for (const r of rows) {
-    drafts.value[r.key] = {
-      value: r.value ?? '',
-      remark: r.remark ?? '',
-    }
-  }
-}
-
-function setDraft(key: string, v: any, field: 'value' | 'remark' = 'value') {
-  const d = drafts.value[key]
-  if (d) d[field] = v
-}
+// 每个 scene 的表单状态：{ provider, base_url, api_key, model }
+const scenes = ref<Record<string, any>>({})
+// prompt 草稿：key → text
+const prompts = ref<Record<string, string>>({})
+// 基础参数
+const params = ref<Record<string, string>>({})
+// 当前选中的主 Prompt（大 textarea 展示）
+const activePromptKey = ref('prompt.chat_system')
+const promptKeys = computed(() => Object.keys(prompts.value))
+// 全局展开：默认只展开 chat_system
+const expanded = ref<Record<string, boolean>>({
+  'model.chat_system': true,
+  'model.search': false,
+  'model.push_generate': false,
+  'model.extract_ai': false,
+})
 
 async function load() {
   loading.value = true
   try {
     const data: any = await fetchAISettings()
-    // request 拦截器已解包（return data.data），直接用
-    const g = data?.groups || { model: [], prompt: [], param: [] }
-    groups.value = g
-    initDraft(data?.flat || [])
+    const flat: any[] = data?.flat || []
+    for (const row of flat) {
+      if (row.idx_set === 'model') {
+        try {
+          const j = JSON.parse(row.value || '{}')
+          scenes.value[row.setting_key] = {
+            provider: j.provider || 'deepseek',
+            base_url: j.base_url || '',
+            api_key: j.api_key || '',
+            model: j.model || '',
+          }
+        } catch {
+          scenes.value[row.setting_key] = { provider: 'deepseek', base_url: '', api_key: '', model: '' }
+        }
+      } else if (row.idx_set === 'prompt') {
+        prompts.value[row.setting_key] = row.value || ''
+      } else if (row.idx_set === 'param') {
+        params.value[row.setting_key] = row.value || ''
+      }
+    }
+    // 确保所有 scene 都有初始值
+    for (const s of SCENES) {
+      if (!scenes.value[s.key]) {
+        scenes.value[s.key] = { provider: 'deepseek', base_url: 'https://api.deepseek.com/v1', api_key: '', model: 'deepseek-chat' }
+      }
+    }
   } catch (e: any) {
     ElMessage.error(e?.message || '加载失败')
   } finally { loading.value = false }
 }
 
-// ===== 保存单条 =====
-async function saveOne(key: string) {
-  const d = drafts.value[key]
-  if (d === undefined) return
+function toggleExpand(k: string) {
+  expanded.value[k] = !expanded.value[k]
+}
+
+// Provider 变更 → 自动填 base_url（custom 除外）
+function onProviderChange(k: string) {
+  const s = scenes.value[k]
+  const meta = providerMeta(s.provider)
+  if (meta && meta.value !== 'custom') s.base_url = meta.base_url
+}
+
+// ========== 保存 ==========
+async function saveScene(k: string) {
+  const s = scenes.value[k]
+  if (!s.base_url || !s.model) {
+    ElMessage.warning('Base URL 和模型名不能为空')
+    return
+  }
   try {
-    await saveAISetting(key, { value: d.value ?? '', remark: d.remark })
-    ElMessage.success('已保存（60s 热更缓存，立即生效）')
+    await saveAISetting(k, {
+      value: JSON.stringify({
+        provider: s.provider, base_url: s.base_url,
+        api_key: s.api_key, model: s.model,
+      }, null, 2),
+    })
+    ElMessage.success('已保存（立即生效）')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '保存失败')
   }
 }
 
-// ===== Tab 1: 模型（每行一个 JSON 编辑器 + 连通性测试）=====
-const PROVIDERS = ['deepseek', 'doubao', 'qwen', 'openrouter', 'custom']
-
-function parseJsonSafe(s: string): { ok: boolean; data?: any; err?: string } {
-  if (!s || !s.trim()) return { ok: true, data: null }
-  try { return { ok: true, data: JSON.parse(s) } }
-  catch (e: any) { return { ok: false, err: String(e) } }
-}
-
-function testKey(key: string) {
-  const d = drafts.value[key]
-  const p = parseJsonSafe(d?.value || '')
-  if (!p.ok) {
-    ElMessage.error(`JSON 不合法：${p.err}`)
-    return
-  }
-  if (!p.data?.api_key || !p.data?.base_url || !p.data?.model) {
-    ElMessage.error('缺少 api_key / base_url / model')
-    return
-  }
-  const payload = {
-    base_url: p.data.base_url,
-    api_key: p.data.api_key,
-    model: p.data.model,
-    temperature: 0,
-    timeout: 15,
-  }
-  ElMessage.info('发起连通性测试…')
-  testAIConnection(payload).then(res => {
-    if (res?.code === 0) {
-      const r = res.data
-      if (r?.ok) {
-        ElMessage.success(`✅ 连通！延迟 ${r.latency_ms}ms · ${r.model}`)
-      } else {
-        ElMessage.error(`❌ ${r.reason}（${r.latency_ms}ms）`)
-      }
-    } else ElMessage.error(res?.msg || '接口失败')
-  }).catch(e => ElMessage.error(String(e)))
-}
-
-function jsonPretty(key: string) {
-  const d = drafts.value[key]
-  const p = parseJsonSafe(d?.value || '')
-  if (p.ok && p.data) {
-    drafts.value[key].value = JSON.stringify(p.data, null, 2)
-  }
-}
-
-// ===== Tab 2: Prompt（选择 + textarea + 试运行）=====
-const promptKey = ref('prompt.chat_system')
-const promptKeys = computed(() =>
-  groups.value.prompt?.map((r: any) => r.key) || [])
-const promptInput = ref('你好，请先做自我介绍')
-const promptTrying = ref(false)
-const promptResult = ref<any>(null)
-
-async function tryPrompt() {
-  promptTrying.value = true
-  promptResult.value = null
+async function savePrompt() {
   try {
-    const data: any = await tryAIPrompt({
-      setting_key: promptKey.value,
-      input_text: promptInput.value,
+    await saveAISetting(activePromptKey.value, { value: prompts.value[activePromptKey.value] ?? '' })
+    ElMessage.success('Prompt 已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  }
+}
+
+async function saveParam(k: string) {
+  try {
+    await saveAISetting(k, { value: params.value[k] ?? '' })
+    ElMessage.success('已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  }
+}
+
+// ========== 测试连接 ==========
+const testLoading = ref<Record<string, boolean>>({})
+async function testScene(k: string) {
+  const s = scenes.value[k]
+  if (!s.base_url || !s.api_key || !s.model) {
+    ElMessage.warning('请先填完 Base URL / API Key / 模型名')
+    return
+  }
+  testLoading.value[k] = true
+  try {
+    const res: any = await testAIConnection({
+      base_url: s.base_url, api_key: s.api_key, model: s.model,
+      temperature: 0, timeout: 15,
     })
-    promptResult.value = data
+    // request 拦截器已解包
+    if (res?.ok) ElMessage.success(`✅ 连通！${res.model} · ${res.latency_ms}ms`)
+    else ElMessage.error(`❌ ${res?.reason || '连接失败'}`)
   } catch (e: any) {
-    promptResult.value = { error: true, message: e?.message || '试运行失败' }
-  } finally { promptTrying.value = false }
-}
-
-// ===== Tab 3: 参数 =====
-// 数字直接用 el-input-number，但存的字符串；保存时原样发后端
-
-// ===== Tab 4: 快照 =====
-const snapKey = ref('prompt.chat_system')
-const snapKeys = computed(() =>
-  groups.value.flat?.filter((r: any) => r.value_type !== 'json').map((r: any) => r.key) || [])
-const snapshots = ref<any[]>([])
-const snapLoading = ref(false)
-
-async function loadSnaps() {
-  snapLoading.value = true
-  try {
-    const data: any = await fetchAISnapshots(snapKey.value)
-    snapshots.value = data || []
-  } catch (e: any) {
-    ElMessage.error(e?.message || '加载失败')
-  } finally { snapLoading.value = false }
-}
-
-async function doRollback(snap: any) {
-  try {
-    await ElMessageBox.confirm(
-      `回滚 ${snap.setting_key} 到 #${snap.id}？操作后当前值会被覆盖，但新快照会自动入历史。`,
-      '确认回滚', { type: 'warning', confirmButtonText: '回滚' })
-  } catch { return }
-  const res = await rollbackAISetting(snap.setting_key, snap.id)
-  if (res?.code === 0) {
-    ElMessage.success('已回滚，立即生效')
-    await load()
-    await loadSnaps()
-  } else ElMessage.error(res?.msg || '回滚失败')
+    ElMessage.error(e?.message || '测试失败')
+  } finally { testLoading.value[k] = false }
 }
 
 onMounted(load)
@@ -164,203 +161,213 @@ onMounted(load)
   <div class="ai-setting-page">
     <div class="page-head">
       <h2>AI 设置</h2>
-      <p class="desc">AI 相关配置（模型 / Prompt / 参数）在这里统一管理，改动立即生效（60s 热更缓存）。管理员 / 运营可编辑。</p>
+      <p class="desc">选择模型提供商 → 填 API Key → 给每个业务场景分配模型。改动立即生效。</p>
     </div>
 
-    <el-tabs v-model="activeTab" type="border-card" class="ai-tabs">
-      <!-- ===== Tab 1: 模型 ===== -->
-      <el-tab-pane label="模型" name="model">
-        <div v-if="!groups.model?.length" class="empty-hint">暂无模型配置（种子 SQL 未执行？）</div>
-        <div v-for="row in groups.model" :key="row.key" class="model-row">
-          <div class="row-head">
-            <div class="row-info">
-              <span class="key-badge">{{ row.key }}</span>
-              <span class="row-remark">{{ row.remark }}</span>
-            </div>
-            <div class="row-actions">
-              <el-button link size="small" @click="jsonPretty(row.key)">格式化</el-button>
-              <el-button size="small" type="primary" :loading="loading" @click="testKey(row.key)">
-                连通性测试
-              </el-button>
-              <el-button size="small" type="success" @click="saveOne(row.key)">保存</el-button>
-            </div>
+    <!-- ========== 一、模型接入（4 场景卡片） ========== -->
+    <div class="section">
+      <div class="section-title">
+        <span class="num">1</span>
+        <span>模型接入</span>
+        <span class="sub">（选 Provider → 填 Key → 分配场景）</span>
+      </div>
+
+      <div v-for="s in SCENES" :key="s.key" class="scene-card">
+        <div class="scene-head" @click="toggleExpand(s.key)">
+          <div class="scene-left">
+            <span class="scene-icon">{{ s.icon }}</span>
+            <span class="scene-name">{{ s.name }}</span>
+            <span class="scene-key">{{ s.key }}</span>
           </div>
-          <el-input
-            :model-value="drafts[row.key]?.value"
-            @update:model-value="(v: any) => setDraft(row.key, v)"
-            type="textarea"
-            :autosize="{ minRows: 5, maxRows: 12 }"
-            resize="none"
-            class="json-editor"
-            placeholder='{"provider":"deepseek","base_url":"...","api_key":"","model":"deepseek-chat"}'
-          />
-          <div v-if="parseJsonSafe(drafts[row.key]?.value).ok === false" class="json-error">
-            JSON 不合法：{{ parseJsonSafe(drafts[row.key]?.value).err }}
+          <div class="scene-right">
+            <template v-if="expanded[s.key]">
+              <el-icon><Top /></el-icon>
+            </template>
+            <template v-else>
+              <el-icon><Bottom /></el-icon>
+            </template>
           </div>
         </div>
-      </el-tab-pane>
 
-      <!-- ===== Tab 2: Prompt ===== -->
-      <el-tab-pane label="Prompt" name="prompt">
-        <div class="prompt-wrap">
-          <el-form inline>
-            <el-form-item label="选择 Prompt">
-              <el-select v-model="promptKey" style="width: 280px" @change="promptResult = null">
-                <el-option v-for="k in promptKeys" :key="k" :label="k" :value="k" />
+        <div v-if="expanded[s.key]" class="scene-body">
+          <div v-if="s.tip" class="scene-tip">{{ s.tip }}</div>
+
+          <el-form :model="scenes[s.key]" label-width="110px" size="default">
+            <el-form-item label="服务商">
+              <el-select v-model="scenes[s.key].provider" style="width: 320px"
+                @change="onProviderChange(s.key)">
+                <el-option v-for="p in PROVIDERS" :key="p.value" :label="p.label" :value="p.value" />
               </el-select>
+              <span v-if="providerMeta(scenes[s.key].provider)?.hint" class="form-hint">
+                {{ providerMeta(scenes[s.key].provider)?.hint }}
+              </span>
             </el-form-item>
-            <el-form-item>
-              <el-button size="small" type="success" @click="saveOne(promptKey)">保存</el-button>
-              <el-button size="small" @click="loadSnaps; snapKey = promptKey"
-                style="margin-left:8px">看历史</el-button>
+
+            <el-form-item label="Base URL">
+              <el-input v-model="scenes[s.key].base_url" placeholder="如 https://api.deepseek.com/v1" style="width: 420px" />
+              <span class="form-hint">接口根地址，选 Provider 会自动填；自定义时手动输入</span>
+            </el-form-item>
+
+            <el-form-item label="API Key">
+              <el-input v-model="scenes[s.key].api_key" type="password" show-password
+                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx" style="width: 420px" />
+            </el-form-item>
+
+            <el-form-item label="模型名">
+              <el-input v-model="scenes[s.key].model" placeholder="如 deepseek-chat" style="width: 420px" />
+              <span class="form-hint">
+                <template v-if="scenes[s.key].provider === 'deepseek'">
+                  deepseek-chat（通用）/ deepseek-reasoner（推理）
+                </template>
+                <template v-else-if="scenes[s.key].provider === 'doubao'">
+                  火山引擎控制台创建的 Endpoint ID（ep-xxxx）
+                </template>
+                <template v-else-if="scenes[s.key].provider === 'qwen'">
+                  qwen-plus / qwen-max / qwen-turbo
+                </template>
+              </span>
+            </el-form-item>
+
+            <el-form-item label=" ">
+              <el-button type="primary" :loading="testLoading[s.key]" @click="testScene(s.key)">
+                🔌 测试连接
+              </el-button>
+              <el-button type="success" @click="saveScene(s.key)" style="margin-left:8px">💾 保存</el-button>
+              <span class="form-hint">先测试连通再保存更稳妥</span>
             </el-form-item>
           </el-form>
-          <el-input
-            :model-value="drafts[promptKey]?.value"
-            @update:model-value="(v: any) => setDraft(promptKey, v)"
-            type="textarea"
-            :autosize="{ minRows: 14, maxRows: 26 }"
-            resize="none"
-            class="prompt-editor"
-          />
+        </div>
+      </div>
+    </div>
 
-          <!-- 试运行 -->
-          <el-divider content-position="left">试运行</el-divider>
-          <div class="try-box">
-            <el-input v-model="promptInput" placeholder="喂给模型的示例输入" />
-            <el-button type="primary" :loading="promptTrying" @click="tryPrompt">
-              试运行 →
-            </el-button>
-          </div>
-          <div v-if="promptResult" class="try-result">
-            <div v-if="promptResult.error" class="try-err">
-              ❌ {{ promptResult.message }}
-            </div>
-            <div v-else class="try-ok">
-              <div class="try-meta">
-                ✅ {{ promptResult.model }} · {{ promptResult.latency_ms }}ms
-                <span v-if="promptResult.usage?.total_tokens">
-                  · {{ promptResult.usage.total_tokens }} tokens
-                </span>
-              </div>
-              <pre>{{ promptResult.content }}</pre>
-            </div>
+    <!-- ========== 二、全局参数 ========== -->
+    <div class="section">
+      <div class="section-title">
+        <span class="num">2</span>
+        <span>全局参数</span>
+        <span class="sub">（控制 AI 调用行为，一般不用改）</span>
+      </div>
+      <div class="params-grid">
+        <div class="param-item" v-for="(label, key) in {
+          'param.chat_daily_limit': '每日对话上限（会员）',
+          'param.llm_temperature': 'Temperature（0 保守 → 1 发散）',
+          'param.llm_max_tokens': '单次回复上限 tokens',
+          'param.llm_timeout_s': '请求超时（秒）',
+          'param.llm_max_retries': '失败重试次数',
+        }" :key="key">
+          <div class="param-label">{{ label }}</div>
+          <div class="param-row">
+            <el-input v-model="params[key]" size="small" style="width: 140px" />
+            <el-button size="small" type="success" @click="saveParam(key)">保存</el-button>
           </div>
         </div>
-      </el-tab-pane>
+      </div>
+    </div>
 
-      <!-- ===== Tab 3: 参数 ===== -->
-      <el-tab-pane label="基础参数" name="param">
-        <el-table :data="groups.param" size="small" class="param-table">
-          <el-table-column prop="key" label="参数 Key" width="220" />
-          <el-table-column label="值">
-            <template #default="{ row }">
-              <el-input
-                :model-value="drafts[row.key]?.value"
-                @update:model-value="(v: any) => setDraft(row.key, v)"
-                size="small"
-                style="width: 200px"
-                :placeholder="row.value_type === 'number' ? '数字' : '值'"
-              />
-              <span class="vtype-tag">{{ row.value_type }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="remark" label="说明" />
-          <el-table-column label="操作" width="120">
-            <template #default="{ row }">
-              <el-button size="small" type="success" @click="saveOne(row.key)">保存</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-tab-pane>
-
-      <!-- ===== Tab 4: 快照 ===== -->
-      <el-tab-pane label="变更历史 / 回滚" name="snapshot">
-        <div class="snap-head">
-          <el-select v-model="snapKey" style="width: 240px" @change="loadSnaps">
-            <el-option v-for="k in snapKeys" :key="k" :label="k" :value="k" />
-          </el-select>
-          <el-button size="small" @click="loadSnaps">刷新</el-button>
+    <!-- ========== 三、系统提示词 ========== -->
+    <div class="section">
+      <div class="section-title">
+        <span class="num">3</span>
+        <span>系统提示词（Prompt）</span>
+        <span class="sub">（控制 AI 的"人设"和输出风格）</span>
+      </div>
+      <div class="prompt-wrap">
+        <div class="prompt-tabs">
+          <el-radio-group v-model="activePromptKey" size="small">
+            <el-radio-button v-for="k in promptKeys" :key="k" :value="k">{{
+              k === 'prompt.chat_system' ? '💬 对话主 Prompt' :
+              k === 'prompt.push_generate' ? '📧 推送文案' :
+              k === 'prompt.extract_ai' ? '📑 字段补提取' :
+              k === 'prompt.search_translate' ? '🔍 检索转译' :
+              k === 'prompt.search_score' ? '⭐ 相关性评分' : k
+            }}</el-radio-button>
+          </el-radio-group>
+          <el-button type="success" size="small" @click="savePrompt" style="margin-left:auto">💾 保存当前 Prompt</el-button>
         </div>
-        <div v-if="snapLoading" class="empty-hint">加载中…</div>
-        <el-table v-else :data="snapshots" size="small" class="snap-table">
-          <el-table-column prop="id" label="#" width="60" />
-          <el-table-column prop="created_at" label="时间" width="180" />
-          <el-table-column prop="operator_name" label="操作人" width="120" />
-          <el-table-column label="变更" min-width="320">
-            <template #default="{ row }">
-              <div class="snap-diff">
-                <div class="snap-block old"><div class="lbl">旧</div><pre>{{ row.old_value?.slice(0, 120) }}</pre></div>
-                <div class="snap-block new"><div class="lbl">新</div><pre>{{ row.new_value?.slice(0, 120) }}</pre></div>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="100">
-            <template #default="{ row }">
-              <el-button size="small" @click="doRollback(row)">回滚</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-tab-pane>
-    </el-tabs>
+        <el-input
+          v-model="prompts[activePromptKey]"
+          type="textarea"
+          :autosize="{ minRows: 12, maxRows: 30 }"
+          resize="none"
+          class="prompt-editor"
+        />
+      </div>
+    </div>
+
+    <!-- ========== 页脚 ========== -->
+    <div class="footer-hint">
+      💡 改完立即生效（60 秒进程内缓存自动刷新）· API Key 加密存在数据库中 · 想回滚？改回原值保存即可
+    </div>
   </div>
 </template>
 
 <style scoped>
-.ai-setting-page { padding: 16px; }
-.page-head h2 { margin: 0 0 6px; font-size: 18px; }
-.page-head .desc { margin: 0 0 14px; font-size: 12.5px; color: var(--el-text-color-secondary); }
+.ai-setting-page { padding: 20px; max-width: 960px; }
+.page-head h2 { margin: 0 0 4px; font-size: 20px; }
+.page-head .desc { margin: 0 0 20px; font-size: 13px; color: var(--el-text-color-secondary); }
 
-.ai-tabs { background: transparent; }
+.section { margin-bottom: 28px; }
+.section-title {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px;
+  font-weight: 600; font-size: 15px;
+}
+.section-title .num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; background: #409eff; color: #fff;
+  font-size: 12px; font-weight: 700; flex-shrink: 0;
+}
+.section-title .sub { font-weight: 400; font-size: 12px; color: var(--el-text-color-secondary); }
 
-/* ===== 模型 ===== */
-.model-row {
+/* ===== 场景卡片 ===== */
+.scene-card {
+  border: 1px solid var(--el-border-color-lighter); border-radius: 10px;
+  margin-bottom: 12px; background: #fff; overflow: hidden;
+}
+.scene-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 18px; cursor: pointer; user-select: none;
+  background: #fafbfc; transition: background .15s;
+}
+.scene-head:hover { background: #f0f7ff; }
+.scene-left { display: flex; align-items: center; gap: 10px; }
+.scene-icon { font-size: 18px; }
+.scene-name { font-weight: 600; font-size: 14px; }
+.scene-key {
+  font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+  color: #0369a1; background: #e0f2fe; padding: 1px 8px; border-radius: 4px;
+}
+.scene-body { padding: 16px 18px 20px; border-top: 1px solid var(--el-border-color-lighter); }
+.scene-tip {
+  font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 12px;
+  padding: 8px 12px; background: #f8fafc; border-radius: 6px; border-left: 3px solid #409eff;
+}
+.form-hint {
+  margin-left: 10px; font-size: 12px; color: var(--el-text-color-secondary);
+}
+
+/* ===== 全局参数 ===== */
+.params-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.param-item {
   border: 1px solid var(--el-border-color-lighter); border-radius: 8px;
-  padding: 12px 14px; margin-bottom: 12px; background: #fff;
+  padding: 12px 14px; background: #fff;
 }
-.row-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.row-info { display: flex; align-items: center; gap: 10px; }
-.key-badge {
-  background: #f0f9ff; color: #0369a1; padding: 2px 10px; border-radius: 999px;
-  font-family: monospace; font-size: 12px; border: 1px solid #bae6fd;
-}
-.row-remark { font-size: 12.5px; color: var(--el-text-color-secondary); }
-.row-actions { display: flex; gap: 6px; align-items: center; }
-.json-editor :deep(.el-textarea__inner) { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
-.json-error { margin-top: 6px; color: #dc2626; font-size: 12px; }
-.empty-hint { color: var(--el-text-color-secondary); font-size: 13px; padding: 20px 0; text-align: center; }
+.param-label { font-size: 13px; margin-bottom: 8px; font-weight: 500; }
+.param-row { display: flex; gap: 8px; align-items: center; }
 
 /* ===== Prompt ===== */
-.prompt-wrap .prompt-editor :deep(.el-textarea__inner) {
-  font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
-  line-height: 1.6; background: #fafafa;
-}
-.try-box { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
-.try-box .el-input { flex: 1; }
-.try-result { margin-top: 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; padding: 12px; background: #fff; }
-.try-result pre { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
-.try-meta { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 6px; }
-.try-err { color: #dc2626; font-size: 13px; }
-
-/* ===== 参数 ===== */
-.param-table { width: 100%; }
-.vtype-tag {
-  margin-left: 8px; font-size: 11px; padding: 1px 6px; border-radius: 4px;
-  background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0;
+.prompt-wrap { border: 1px solid var(--el-border-color-lighter); border-radius: 10px; padding: 14px; background: #fff; }
+.prompt-tabs { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.prompt-editor :deep(.el-textarea__inner) {
+  font-family: ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.6;
+  background: #fafafa;
 }
 
-/* ===== 快照 ===== */
-.snap-head { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
-.snap-table .snap-diff { display: flex; gap: 8px; }
-.snap-table .snap-block {
-  flex: 1; background: #fafafa; border-radius: 6px; padding: 6px 10px;
-  border: 1px solid var(--el-border-color-lighter); min-width: 0;
-}
-.snap-table .snap-block pre {
-  margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-word;
-  font-family: ui-monospace, Consolas, monospace; max-height: 80px; overflow: hidden;
-}
-.snap-table .snap-block .lbl {
-  font-size: 11px; font-weight: 700; margin-bottom: 4px; color: var(--el-text-color-secondary);
+.footer-hint {
+  margin-top: 10px; padding: 12px 16px; border-radius: 8px;
+  background: #fffbeb; border: 1px solid #fef3c7;
+  font-size: 12.5px; color: #92400e;
 }
 </style>
