@@ -28,6 +28,18 @@ _CACHE: Dict[str, object] = {"t": 0.0, "ids": None, "mat": None, "pos": {}}
 _TTL = 600
 _LOCK = threading.Lock()
 
+_CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS bid_embedding (
+    bid_id     BIGINT       NOT NULL,
+    model      VARCHAR(64)  NOT NULL DEFAULT 'text-embedding-v3',
+    dim        INT          NOT NULL DEFAULT 1024,
+    vec        LONGBLOB     NOT NULL,
+    updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (bid_id),
+    KEY idx_model (model)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
+
 
 def _norm(arr) -> np.ndarray:
     a = np.asarray(arr, dtype=np.float32)
@@ -116,6 +128,51 @@ def semantic_recall(query: str, top_n: int = 60,
             if p is not None:
                 result[int(b)] = float(sims[p])
     return ordered, result
+
+
+def build_embeddings(rebuild: bool = False, limit: int = 0) -> int:
+    """为 bid_info 生成/更新向量（供爬虫清洗提取后增量调用，也可脚本全量重建）。
+    rebuild=False 只补「尚未建向量」的标讯（增量）；返回本次处理条数。"""
+    from app.database import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        db.execute(text(_CREATE_TABLE_SQL))
+        db.commit()
+        if rebuild:
+            sql = ("SELECT id, title, LEFT(COALESCE(content_text,''),600) AS body "
+                   "FROM bid_info WHERE status=1")
+        else:
+            sql = ("SELECT b.id, b.title, LEFT(COALESCE(b.content_text,''),600) AS body "
+                   "FROM bid_info b LEFT JOIN bid_embedding e ON e.bid_id=b.id "
+                   "WHERE b.status=1 AND e.bid_id IS NULL")
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        rows = db.execute(text(sql)).fetchall()
+        if not rows:
+            return 0
+
+        total = 0
+        for i in range(0, len(rows), 10):
+            chunk = rows[i:i + 10]
+            texts = [(r[1] or "") + "\n" + (r[2] or "") for r in chunk]
+            normed = _norm(encode_texts(texts))
+            for r, v in zip(chunk, normed):
+                db.execute(
+                    text("INSERT INTO bid_embedding (bid_id, model, dim, vec) "
+                         "VALUES (:id, :m, :d, :v) "
+                         "ON DUPLICATE KEY UPDATE model=VALUES(model), dim=VALUES(dim), "
+                         "vec=VALUES(vec), updated_at=CURRENT_TIMESTAMP"),
+                    {"id": int(r[0]), "m": _EMB_MODEL, "d": _DIM,
+                     "v": np.asarray(v, dtype=np.float32).tobytes()},
+                )
+            db.commit()
+            total += len(chunk)
+        invalidate_cache()
+        return total
+    finally:
+        db.close()
 
 
 def invalidate_cache() -> None:

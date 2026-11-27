@@ -63,6 +63,8 @@ _DEFAULTS: Dict[str, Any] = {
     "param.llm_timeout_s": 60,
     "param.llm_temperature": 0.0,
     "param.llm_max_tokens": 2000,
+    # AI 兜底提取总开关：关闭后新入库标讯不再调 AI，统一进待审核人工处理
+    "param.ai_extract_enabled": True,
 }
 
 

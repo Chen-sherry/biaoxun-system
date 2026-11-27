@@ -119,6 +119,9 @@ def get_bid(bid_id: int, db: Session = Depends(get_db)):
 
     data = _bid_to_dict(b, db)
     data["content"] = b.content
+    data["content_text"] = b.content_text
+    data["ai_processed"] = bool(b.ai_processed)
+    data["source_id"] = b.source_id
     data["attachments"] = [
         {"id": a.id, "file_name": a.file_name, "is_require_member": a.is_require_member}
         for a in b.attachments
@@ -154,6 +157,141 @@ def update_bid(
     db.commit()
     db.refresh(bid)
     return ApiResponse.ok({"id": bid.id}, msg="更新成功")
+
+
+@router.get("/{bid_id}/suggestions", summary="待审核编辑：从正文/标题提取建议值")
+def bid_suggestions(
+    bid_id: int,
+    db: Session = Depends(get_db),
+    _: SysUser = Depends(require_role("admin", "admin_role")),
+):
+    """人工审核辅助：返回规则/源站专用提取器给出的候选值（不落库）。
+
+    前端把这些值渲染成「建议」标签，点击即可填入表单，减少手工复制。
+    """
+    import re as _re
+    from app.models.bid import BidSource
+    from app.services.data_clean import (
+        extract_tenderee, extract_budget, extract_deadline,
+        extract_project_code, extract_winner, extract_candidate_table,
+        is_result_notice,
+    )
+    from app.services.source_specs import extract_via_spec
+
+    b = db.query(BidInfo).filter(BidInfo.id == bid_id).first()
+    if not b:
+        raise HTTPException(status_code=404, detail="标讯不存在")
+
+    ct = b.content_text or ""
+    flat = _re.sub(r"\s+", " ", ct)
+    fields: dict = {}
+    if flat:
+        td = extract_tenderee(flat)
+        if td:
+            fields["tenderee"] = td
+        bg = extract_budget(flat)
+        if bg:
+            fields["budget"] = bg
+        dl = extract_deadline(flat)
+        if dl:
+            fields["deadline"] = dl.isoformat() if hasattr(dl, "isoformat") else str(dl)
+        pc = extract_project_code((b.title or "") + " " + flat)
+        if pc:
+            fields["project_code"] = pc
+        if is_result_notice(b.title or "", ct):
+            win = extract_winner(flat)
+            fields.update({k: v for k, v in win.items() if v})
+            tab = extract_candidate_table(ct)
+            for k, v in tab.items():
+                fields.setdefault(k, v)
+
+    # 源站专用提取器（优先级更高，覆盖规则值）
+    if b.source_id:
+        src = db.query(BidSource).filter(BidSource.id == b.source_id).first()
+        if src:
+            try:
+                spec = extract_via_spec(src.code, b.content or ct, {})
+                for k, v in (spec or {}).items():
+                    if v:
+                        fields[k] = v
+            except Exception:
+                pass
+
+    return ApiResponse.ok({
+        "fields": fields,
+        "is_result_notice": is_result_notice(b.title or "", ct),
+    })
+
+
+@router.post("/{bid_id}/reextract", response_model=ApiResponse, summary="待审核：按当前正文重新提取字段")
+def reextract_bid(
+    bid_id: int,
+    db: Session = Depends(get_db),
+    _: SysUser = Depends(require_role("admin", "admin_role")),
+):
+    """人工审核时点「重新提取」：规则 → 源站专用 →（开关开启时）AI 兜底。
+
+    只补空字段，不覆盖已人工修改的值；返回本次新填的字段。
+    """
+    import re as _re
+    from app.models.bid import BidSource
+    from app.services.data_clean import extract_fields_from_text, is_result_notice
+    from app.services.source_specs import fill_gaps_via_spec
+    from app.services import ai_setting_service as ai_svc
+
+    b = db.query(BidInfo).filter(BidInfo.id == bid_id).first()
+    if not b:
+        raise HTTPException(status_code=404, detail="标讯不存在")
+    ct = b.content_text or ""
+    if not ct:
+        return ApiResponse.ok({"updated": {}, "msg": "正文为空，无法提取"})
+
+    FIELDS = ("tenderee", "agency", "budget", "deadline", "winner_unit",
+              "win_amount", "project_code", "region_code")
+    current = {k: getattr(b, k, None) for k in FIELDS}
+    merged = dict(current)
+
+    conn = db.get_bind().raw_connection()
+    try:
+        extra = extract_fields_from_text(b.title or "", ct, conn=conn.cursor(), current=merged)
+        merged.update(extra)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    if b.source_id:
+        src = db.query(BidSource).filter(BidSource.id == b.source_id).first()
+        if src:
+            spec = fill_gaps_via_spec(
+                src.code, b.content or ct, merged,
+                allow_winner=is_result_notice(b.title or "", ct))
+            merged.update(spec)
+
+    # AI 兜底（开关开启且仍缺关键字段）
+    if bool(ai_svc.get("param.ai_extract_enabled", True)):
+        try:
+            from app.services.ai_extract import missing_fields, ai_extract_missing
+            miss = missing_fields(merged)
+            if miss:
+                ai_vals, ai_ok = ai_extract_missing(b.title or "", ct, miss)
+                if ai_ok:
+                    b.ai_processed = 1
+                    for f in ("tenderee", "winner_unit", "win_amount"):
+                        if ai_vals.get(f) is not None:
+                            merged[f] = ai_vals[f]
+        except Exception:
+            pass
+
+    updated = {}
+    for k, v in merged.items():
+        if v and current.get(k) in (None, "", 0):
+            setattr(b, k, v)
+            updated[k] = v
+    db.commit()
+    db.refresh(b)
+    return ApiResponse.ok({"updated": updated, "msg": f"补全 {len(updated)} 个字段"})
 
 
 @router.post("/{bid_id}/audit", response_model=ApiResponse, summary="审核通过")

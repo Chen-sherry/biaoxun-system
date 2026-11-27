@@ -845,11 +845,19 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
 
             # 双线第二道（2026-11-26）：规则提取后关键字段仍不满 → AI 兜底提取，
             # 同一次调用顺带让 AI 分类（行业/客群/公告类型，方案 A 不新增触发）。
+            #   - 总开关关闭（后台待审核页）→ 不调 AI，统一转人工审核
             #   - 调用失败（超时/HTTP 错误/解析失败/异常）→ status=0 进 /bid/pending 待审核
             #   - AI 返回空 = 确认没有 → 照常放行；分类值须命中字典清单才覆盖规则结果
             try:
                 from app.services.ai_extract import missing_fields, ai_extract_missing
+                from app.services import ai_setting_service as ai_svc
                 miss = missing_fields(mapped)
+                if miss and not bool(ai_svc.get("param.ai_extract_enabled", True)):
+                    mapped["status"] = 0
+                    stats["pending"] += 1
+                    logger.info("[crawl] AI 提取开关关闭→转人工 title=%s 缺=%s",
+                                str(mapped.get("title"))[:40], miss)
+                    miss = []
                 if miss:
                     ai_vals, ai_ok = ai_extract_missing(
                         mapped.get("title") or "",
@@ -917,6 +925,15 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
             db.commit()
         except Exception:
             logger.warning("[crawl] 更新 last_crawl_at 失败", exc_info=True)
+
+        # 清洗+提取后的收尾：为本轮新入库标讯增量生成语义向量（供 AI 检索混合召回）
+        if stats["saved"] > 0:
+            try:
+                from app.services.embedding_service import build_embeddings
+                _n = build_embeddings(limit=0)
+                logger.info(f"[crawl] {code}: 语义向量增量 {_n} 条")
+            except Exception:
+                logger.warning(f"[crawl] {code}: 语义向量增量生成失败（不影响采集）", exc_info=True)
 
         logger.info(
             f"[crawl] {code}: fetched={stats['fetched']} saved={stats['saved']} "

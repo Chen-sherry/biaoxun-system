@@ -99,6 +99,47 @@ def save_setting(key: str, payload: SettingIn, db: Session = Depends(get_db),
         raise HTTPException(500, f"保存失败：{str(e)[:120]}")
 
 
+# ============= AI 兜底提取总开关 =============
+# 待审核页面用：关闭后新入库标讯不再调 AI，统一进待审核人工处理
+
+switch_router = APIRouter(prefix="/admin/ai", tags=["后台：AI 提取开关"])
+
+_EXTRACT_SWITCH_KEY = "param.ai_extract_enabled"
+
+
+class ExtractSwitchIn(BaseModel):
+    enabled: bool
+
+
+@switch_router.get("/extract-switch", summary="读取 AI 提取总开关")
+def get_extract_switch(_: SysUser = AdminRole):
+    return ApiResponse.ok({"enabled": bool(svc.get(_EXTRACT_SWITCH_KEY, True))})
+
+
+@switch_router.put("/extract-switch", summary="设置 AI 提取总开关（关→统一转人工）")
+def set_extract_switch(payload: ExtractSwitchIn, db: Session = Depends(get_db),
+                       user: SysUser = Depends(get_current_user)):
+    from app.models.ai_setting import AISetting
+    new_val = "1" if payload.enabled else "0"
+    row = db.query(AISetting).filter(AISetting.setting_key == _EXTRACT_SWITCH_KEY).first()
+    if not row:
+        # 首次使用：直接建行（默认值不落库，这里补上便于审计/回滚）
+        db.add(AISetting(
+            setting_key=_EXTRACT_SWITCH_KEY,
+            value=new_val,
+            value_type="bool",
+            remark="AI 兜底提取总开关（关：统一转人工审核）",
+            idx_set="param",
+            updated_by=user.id,
+        ))
+        db.commit()
+        svc.invalidate(_EXTRACT_SWITCH_KEY)
+    else:
+        svc.update_one(db, _EXTRACT_SWITCH_KEY, new_val, user.id, user.username,
+                       remark=payload and "后台待审核页开关" or None)
+    return ApiResponse.ok({"enabled": payload.enabled})
+
+
 # ============= 历史 + 回滚 =============
 
 @router.get("/{key:path}/snapshots", summary="某条设置的变更历史（最近 20 条）")

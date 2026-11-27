@@ -9,6 +9,24 @@ export function fetchBidDetail(id: number) {
   return request.get(`/api/v1/bids/${id}`)
 }
 
+// 待审核辅助：规则建议值 + 按正文重新提取
+export function fetchBidSuggestions(id: number) {
+  return request.get(`/api/v1/bids/${id}/suggestions`)
+}
+
+export function reextractBid(id: number) {
+  return request.post(`/api/v1/bids/${id}/reextract`)
+}
+
+// AI 兜底提取总开关（待审核页）
+export function fetchExtractSwitch() {
+  return request.get('/api/v1/admin/ai/extract-switch')
+}
+
+export function updateExtractSwitch(enabled: boolean) {
+  return request.put('/api/v1/admin/ai/extract-switch', { enabled })
+}
+
 export function createBid(data: Record<string, any>) {
   return request.post('/api/v1/bids', data)
 }
