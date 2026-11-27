@@ -117,5 +117,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=10, help="评估 TopK，默认 10")
     ap.add_argument("--save", type=str, default=None, help="把明细保存为 JSON")
+    ap.add_argument("--no-semantic", action="store_true", help="关闭语义召回做 A/B 基线对比")
     args = ap.parse_args()
+    if args.no_semantic:
+        import app.services.ai_search as _A
+        _A._semantic_enabled = lambda: False
     run(top_k=args.top, save=args.save)

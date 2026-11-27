@@ -52,5 +52,10 @@ celery_app.conf.update(
             "task": "app.tasks.push_tasks.push_custom_templates",
             "schedule": crontab(minute="*/5"),
         },
+        # 个人订阅推送：每 5 分钟自检，按每条订阅的 frequency 到点才发邮件
+        "subscribe-push-check": {
+            "task": "app.tasks.push_tasks.push_hourly_subscriptions",
+            "schedule": crontab(minute="*/5"),
+        },
     },
 )

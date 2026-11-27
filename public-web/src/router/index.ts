@@ -8,6 +8,7 @@ const router = createRouter({
     { path: '/bid/:id', name: 'bid-detail', component: () => import('@/views/BidDetail.vue') },
     { path: '/login', name: 'login', component: () => import('@/views/Login.vue') },
     { path: '/member', name: 'member', component: () => import('@/views/Member.vue') },
+    { path: '/subscribe', name: 'subscribe', component: () => import('@/views/Subscribe.vue') },
     { path: '/ai-match', name: 'ai-match', component: () => import('@/views/AIMatch.vue') },
     { path: '/404', component: () => import('@/views/NotFound.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/404' },

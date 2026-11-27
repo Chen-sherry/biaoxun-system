@@ -481,7 +481,7 @@ def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
         
         sql = text(f"""
             SELECT b.id, b.title, b.tenderee, b.agency, b.procure_type,
-                   b.publish_time, b.deadline, b.budget, b.winner_unit,
+                   b.publish_time, b.deadline, b.budget, b.winner_unit, b.project_code,
                    b.region_code, b.source_url,
                    COALESCE(r.name, '') AS region_name,
                    COALESCE(nt.name, '') AS notice_type,
@@ -524,7 +524,7 @@ def _fetch_bids_by_ids(ids: List[int]) -> List[Dict[str, Any]]:
         params = {f"id{i}": int(v) for i, v in enumerate(ids)}
         sql = text(f"""
             SELECT b.id, b.title, b.tenderee, b.agency, b.procure_type,
-                   b.publish_time, b.deadline, b.budget, b.winner_unit,
+                   b.publish_time, b.deadline, b.budget, b.winner_unit, b.project_code,
                    b.region_code, b.source_url,
                    COALESCE(r.name, '') AS region_name,
                    COALESCE(nt.name, '') AS notice_type,
@@ -569,6 +569,28 @@ def _augment_with_semantic(candidates: List[Dict[str, Any]], cond: Dict[str, Any
     for r in extra:
         r["_sim"] = sim_by_id.get(r["id"], 0.0)
     return candidates + extra, {"semantic_enabled": True, "semantic_added": len(extra)}
+
+
+def _dedup_by_project(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按 project_code 合并同一项目的多条公告（招标/中标/更正）。
+    保留分数最高的一条，并标注 variant_count（该项目共几条）；无 project_code 的不合并。"""
+    if not items:
+        return items
+    seen: Dict[str, Dict[str, Any]] = {}
+    out: List[Dict[str, Any]] = []
+    for it in items:  # items 已按分数降序
+        pc = str(it.get("project_code") or "").strip()
+        if not pc:
+            it["variant_count"] = 1
+            out.append(it)
+            continue
+        if pc in seen:
+            seen[pc]["variant_count"] = int(seen[pc].get("variant_count", 1)) + 1
+            continue
+        it["variant_count"] = 1
+        seen[pc] = it
+        out.append(it)
+    return out
 
 
 # ---------------------------------------------------------------- #
@@ -948,6 +970,7 @@ def ai_search(query: str, limit: int = 120,
     candidates, budget_dropped = _apply_budget_filter(cond, candidates)
     scored, score_diag = score_candidates(query, candidates, date_relaxed=date_relaxed,
                                           cond=cond, score_cap=score_cap)
+    scored = _dedup_by_project(scored)   # 同一项目多条公告合并（招标/中标/更正）
 
     if scored and scored[0]["score"] < FALLBACK_MIN_SCORE:
         # 真无关（最高分都不到展示底线）→ 空态，不给用户看垃圾

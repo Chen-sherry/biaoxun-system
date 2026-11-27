@@ -44,6 +44,7 @@ export default { components: { Search, User, ArrowDown } }
         <router-link to="/search" active-class="active">高级搜索</router-link>
         <router-link to="/ai-match" active-class="active">智能检索</router-link>
         <router-link to="/member" active-class="active">会员中心</router-link>
+        <router-link to="/subscribe" active-class="active">我的订阅</router-link>
       </nav>
       <div class="header-right">
         <div class="mini-search">
@@ -70,6 +71,7 @@ export default { components: { Search, User, ArrowDown } }
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item @click="router.push('/member')">会员中心</el-dropdown-item>
+                <el-dropdown-item @click="router.push('/subscribe')">我的订阅</el-dropdown-item>
                 <el-dropdown-item @click="router.push('/member')">我的订单</el-dropdown-item>
                 <el-dropdown-item @click="goLogout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
@@ -98,12 +100,14 @@ export default { components: { Search, User, ArrowDown } }
           <router-link to="/search" active-class="active">高级搜索</router-link>
           <router-link to="/ai-match" active-class="active">智能检索</router-link>
           <router-link to="/member" active-class="active">会员中心</router-link>
+          <router-link to="/subscribe" active-class="active">我的订阅</router-link>
         </nav>
         <div class="mobile-user">
           <template v-if="isLoggedIn">
             <button class="mobile-btn" @click="router.push('/member')">
               <el-icon><User /></el-icon> 会员中心
             </button>
+            <button class="mobile-btn" @click="router.push('/subscribe')">我的订阅</button>
             <button class="mobile-btn" @click="goLogout">退出登录</button>
           </template>
           <el-button v-else type="primary" style="width:100%" @click="goLogin">登录 / 注册</el-button>

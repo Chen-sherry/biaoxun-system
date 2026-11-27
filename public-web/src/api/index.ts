@@ -47,3 +47,23 @@ export function createOrder(data: { package_id: number }) {
 export function payOrder(orderNo: string, payType = 'manual') {
   return request.post(`/api/v1/member-orders/${orderNo}/pay`, null, { params: { pay_type: payType } })
 }
+
+// ============ 订阅 ============
+export function fetchMySubscribes() {
+  return request.get('/api/v1/subscribes/mine')
+}
+export function createSubscribe(data: Record<string, any>) {
+  return request.post('/api/v1/subscribes', data)
+}
+export function updateSubscribe(id: number, data: Record<string, any>) {
+  return request.put(`/api/v1/subscribes/${id}`, data)
+}
+export function deleteSubscribe(id: number) {
+  return request.delete(`/api/v1/subscribes/${id}`)
+}
+export function pushSubscribeNow(id: number) {
+  return request.post(`/api/v1/subscribes/${id}/push-now`)
+}
+export function fetchMyPushRecords(params?: Record<string, any>) {
+  return request.get('/api/v1/subscribes/my-records', { params })
+}

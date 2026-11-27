@@ -156,6 +156,21 @@ function bandDivider(index: number): string | null {
   return null
 }
 
+// 命中词高亮：把转译出的关键词/同义词在标题、摘要里标色
+function escHtml(s: string): string {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+function highlight(text: string): string {
+  const out = escHtml(text)
+  const t = translated.value || {}
+  const kws = ([...(t.keywords || []), ...(t.synonyms || [])] as string[])
+    .filter((k) => k && k.length >= 2)
+  const uniq = Array.from(new Set(kws)).slice(0, 12)
+  if (!uniq.length) return out
+  const re = new RegExp('(' + uniq.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'g')
+  return out.replace(re, '<mark class="hl">$1</mark>')
+}
+
 const conditionChips = computed(() => {
   const t = translated.value
   if (!t) return []
@@ -411,14 +426,15 @@ onMounted(async () => {
                 <div class="score-label">AI 评分</div>
               </div>
               <div class="result-main">
-                <div class="result-title">{{ item.title }}</div>
+                <div class="result-title" v-html="highlight(item.title)"></div>
                 <div class="result-reason">
                   <el-tag size="small" :type="item.score >= 70 ? 'success' : item.score >= 60 ? 'info' : 'warning'" effect="dark">
                     {{ item.score >= 70 ? '高相关' : item.score >= 60 ? '辅助推荐' : '兜底参考' }}
                   </el-tag>
+                  <el-tag v-if="item.variant_count > 1" size="small" type="info" effect="plain" class="variant-tag">同类 {{ item.variant_count }} 条</el-tag>
                   <span v-if="item.reason" class="reason-text">{{ item.reason }}</span>
                 </div>
-                <div v-if="item.snippet" class="result-snippet">{{ item.snippet.slice(0, 160) }}</div>
+                <div v-if="item.snippet" class="result-snippet" v-html="highlight(item.snippet.slice(0, 160))"></div>
                 <div class="result-meta-line">
                   <span v-if="item.notice_type"><el-icon><Tickets /></el-icon> {{ item.notice_type }}</span>
                   <span v-if="item.tenderee"><el-icon><OfficeBuilding /></el-icon> {{ item.tenderee }}</span>
@@ -581,6 +597,8 @@ onMounted(async () => {
 .result-card:hover .result-title { color: var(--accent-deep); }
 .result-reason { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .reason-text { font-size: 13px; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-title :deep(mark.hl), .result-snippet :deep(mark.hl) { background: rgba(56,189,248,0.28); color: inherit; padding: 0 2px; border-radius: 3px; }
+.variant-tag { margin-left: 6px; }
 .result-meta-line { font-size: 12px; color: var(--ink-500); display: flex; gap: 16px; flex-wrap: wrap; }
 .result-meta-line span { display: inline-flex; align-items: center; gap: 4px; }
 .result-arrow { color: var(--line-strong); font-size: 18px; flex: none; margin-top: 20px; transition: all 0.3s var(--ease); }

@@ -20,7 +20,10 @@ def my_member_status(
     db: Session = Depends(get_db),
     user: SysUser = Depends(get_current_user),
 ):
-    """返回当前用户的会员状态：是否有效会员、等级、套餐名、到期时间、剩余天数。"""
+    """返回当前用户的会员状态：是否有效会员、等级、套餐名、到期时间、剩余天数、订阅上限。"""
+    from app.services.subscribe_service import get_user_max_subscribe
+
+    max_subscribe = get_user_max_subscribe(db, user.id)
     now = datetime.now()
     active_order = (
         db.query(MemberOrder)
@@ -41,6 +44,7 @@ def my_member_status(
             "package_name": None,
             "end_date": None,
             "remaining_days": 0,
+            "max_subscribe": max_subscribe,
         })
     pkg = db.query(MemberPackage).filter(MemberPackage.id == active_order.package_id).first()
     remaining = (active_order.end_date - now).days
@@ -50,6 +54,7 @@ def my_member_status(
         "package_name": pkg.name if pkg else None,
         "end_date": active_order.end_date.isoformat(),
         "remaining_days": max(remaining, 0),
+        "max_subscribe": max_subscribe,
     })
 
 

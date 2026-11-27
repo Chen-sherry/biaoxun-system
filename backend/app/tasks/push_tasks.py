@@ -177,8 +177,20 @@ def send_expiring_bid_daily():
 
 @celery_app.task(name="app.tasks.push_tasks.push_hourly_subscriptions")
 def push_hourly_subscriptions():
-    """每小时推送（Q7 已定：本期不启用，保留占位）"""
-    return {"status": "placeholder"}
+    """个人订阅推送：每 5 分钟自检，按每条订阅的 frequency（realtime/hourly/daily）
+    判断是否到点，命中新标讯后发邮件给订阅用户并落推送记录。
+    逻辑统一走 subscribe_service.run_all_subscribe_pushes。"""
+    from app.database import SessionLocal
+    from app.services.subscribe_service import run_all_subscribe_pushes
+
+    db = SessionLocal()
+    try:
+        return run_all_subscribe_pushes(db)
+    except Exception as e:
+        logger.exception(f"[push] subscribe push failed: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
 
 
 @celery_app.task(name="app.tasks.push_tasks.push_custom_templates")
