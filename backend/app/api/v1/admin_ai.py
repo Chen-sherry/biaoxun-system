@@ -13,7 +13,7 @@ from typing import List, Optional
 import json as _json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -84,12 +84,14 @@ def list_snapshots(key: str, db: Session = Depends(get_db), _: SysUser = AdminRo
 
 
 @router.post("/{key:path}/rollback", summary="回滚到某快照（传 snapshot_id）")
-def rollback_setting(key: str, payload: BaseModel, db: Session = Depends(get_db),
+def rollback_setting(key: str, payload: dict = Body(...), db: Session = Depends(get_db),
                      user: SysUser = Depends(get_current_user)):
     """payload 需含 snapshot_id（int）。"""
-    snap_id = getattr(payload, 'snapshot_id', None)
+    snap_id = payload.get('snapshot_id')
     if snap_id is None:
         raise HTTPException(400, '缺少 snapshot_id')
+    try: snap_id = int(snap_id)
+    except (TypeError, ValueError): raise HTTPException(400, 'snapshot_id 必须是整数')
     from app.models.ai_setting import AISettingSnapshot
     snap = db.query(AISettingSnapshot).filter(AISettingSnapshot.id == snap_id).first()
     if not snap or snap.setting_key != key:
