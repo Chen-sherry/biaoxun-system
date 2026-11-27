@@ -53,7 +53,7 @@ TRANSLATE_PROMPT = """你是标讯（招投标公告）检索系统的查询转�
 可用字段与取值规则：
 - keywords: string[]，3~6 个核心检索词（保留原意，名词短语，不要含"找/帮我/最近"等虚词）
 - synonyms: string[]，2~10 个同义词、上位词或地区展开词（如 学校→中小学、幼儿园、教育局；医院→卫生院、人民医院），用于扩大召回；没有合适的给 []
-- 地区概念必须展开：用户提到口语化区域（粤北/珠三角/粤东/粤西/粤西地区/长三角/京津冀/东北/西北 等）时，keywords 保留概念词本身，synonyms 必须列出该区域覆盖的城市名（粤北→韶关、清远、云浮；珠三角→广州、深圳、佛山、东莞、中山、珠海、惠州、江门、肇庆；粤东→汕头、潮州、揭阳、汕尾；粤西→湛江、茂名、阳江；长三角→上海、南京、杭州、苏州、无锡、宁波；京津冀→北京、天津、石家庄），让城市名参与召回
+- 地区概念必须展开：用户提到口语化区域时，keywords 保留概念词本身，synonyms 必须列出该区域覆盖的省市名，让省市名参与召回。常见展开：华南→广东、广西、海南、香港、澳门；华东→上海、江苏、浙江、安徽、福建、江西、山东；华北→北京、天津、河北、山西、内蒙古；华中→河南、湖北、湖南；西北→陕西、甘肃、青海、宁夏、新疆；西南→重庆、四川、贵州、云南、西藏；粤北→韶关、清远、云浮；珠三角→广州、深圳、佛山、东莞、中山、珠海、惠州、江门、肇庆；粤东→汕头、潮州、揭阳、汕尾；粤西→湛江、茂名、阳江；长三角→上海、南京、杭州、苏州、无锡、宁波；京津冀→北京、天津、石家庄；东北→辽宁、吉林、黑龙江
 - region_code: 6 位国标行政区划代码（如 合肥=340100、安徽=340000、北京=110000、朝阳区=110105）。用户提到市/区县用对应完整代码，提到省用省代码，没提则 null
 - region_name: 与 region_code 对应的中文名（如 合肥、安徽），用于显示，没提则 null
 - date_from / date_to: YYYY-MM-DD，按用户话里的相对时间换算成具体日期（如"最近一个月"→ date_from=一个月前），没提则 null
@@ -79,6 +79,12 @@ def _today() -> str:
 
 # 口语化区域 → 覆盖城市（确定性展开，不依赖 LLM 是否听话；DB Prompt 可另补充）
 REGION_ALIAS = {
+    "华南": ["广东", "广西", "海南", "香港", "澳门"],
+    "华东": ["上海", "江苏", "浙江", "安徽", "福建", "江西", "山东"],
+    "华北": ["北京", "天津", "河北", "山西", "内蒙古"],
+    "华中": ["河南", "湖北", "湖南"],
+    "西北": ["陕西", "甘肃", "青海", "宁夏", "新疆"],
+    "西南": ["重庆", "四川", "贵州", "云南", "西藏"],
     "粤北": ["韶关", "清远", "云浮"],
     "珠三角": ["广州", "深圳", "佛山", "东莞", "中山", "珠海", "惠州", "江门", "肇庆"],
     "粤东": ["汕头", "潮州", "揭阳", "汕尾"],
@@ -127,6 +133,8 @@ def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
         prompt = svc.get_prompt("prompt.search_translate", TRANSLATE_PROMPT)
         # 用 replace 而非 format：Prompt 可在 admin 后台编辑，避免用户写入花括号导致格式化异常
         prompt_text = prompt.replace("{today}", _today())
+        # 转译是结构化 JSON 提取任务，用 qwen-turbo 加速（比 qwen-plus 快 2~3x）
+        translate_model = "qwen-turbo" if model_cfg.get("provider") == "alibaba" else model_cfg.get("model")
         data = chat_json(
             [
                 {"role": "system", "content": prompt_text},
@@ -134,10 +142,10 @@ def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
             ],
             expect="object",
             temperature=0,
-            timeout=30,
+            timeout=15,
             json_mode=True,
             tag="translate",
-            model_override=model_cfg.get("model"),
+            model_override=translate_model,
             base_url_override=model_cfg.get("base_url"),
             api_key_override=model_cfg.get("api_key"),
         )
@@ -258,96 +266,68 @@ def _notice_type_id(name: str) -> Optional[int]:
 
 def search_candidates(cond: Dict[str, Any]
                       ) -> Tuple[List[Dict[str, Any]], bool, Dict[str, Any]]:
-    """按条件粗筛候选。召回策略序列（逐层累积）：
-    ft_and(全条件) → ft_or(全条件) → ft_or_exp(+同义词)
-    → 放宽日期 → 放宽类型 → 放宽地区
-    → like_or 兜底（短词/FT 0 行/索引缺失时走原 4 级 LIKE）→ latest 纯最新
-    单层结果不足 MIN_CANDIDATES 时继续放宽并按 id 去重合并，避免首层非空即停
-    导致召回过少；达到目标数或策略用尽才返回。
+    """按条件粗筛候选。
+    
+    【优化】region/date/type/group 已改为软过滤（加权排序），不再硬剔除。
+    策略简化为：ft_or_exp(+同义词) → like_or 兜底 → latest 纯最新
     返回 (候选列表, 是否放宽了日期, 诊断 meta)。"""
     keywords = cond.get("keywords") or []
     synonyms = cond.get("synonyms") or []
     has_date = bool(cond.get("date_from") or cond.get("date_to"))
-
-    strict = dict(region=True, date=True, extra=True)
-    lv_date = dict(region=True, date=False, extra=True)    # 放宽日期
-    lv_type = dict(region=True, date=False, extra=False)   # 放宽类型
-    lv_kw = dict(region=False, date=False, extra=False)    # 只留关键词
+    
+    # lv 参数已无实际意义（软过滤不依赖它），保留空 dict 兼容接口
+    _lv = {}
 
     meta: Dict[str, Any] = {"match_mode": "latest", "relax_level": "latest",
                             "dropped_short": []}
 
     strategies: List[Tuple[str, Dict[str, bool], Optional[Dict[str, Any]], str]] = []
     ft_cols = _ft_columns()
+    
     if ft_cols and keywords:
-        and_expr, dropped = build_ft_query(keywords, "and")
-        or_expr, dropped2 = build_ft_query(keywords, "or")
-        exp_expr, dropped3 = build_ft_query(keywords, "or", extra=synonyms)
-        meta["dropped_short"] = sorted(set(dropped + dropped2 + dropped3))
+        or_expr, dropped1 = build_ft_query(keywords, "or")
+        exp_expr, dropped2 = build_ft_query(keywords, "or", extra=synonyms)
+        meta["dropped_short"] = sorted(set(dropped1 + dropped2))
+        
         if or_expr:
             ft_match = {"kind": "ft", "cols": ft_cols}
-            if and_expr and and_expr != or_expr:
-                strategies.append(("ft_and", strict, dict(ft_match, expr=and_expr), "strict"))
-            strategies.append(("ft_or", strict, dict(ft_match, expr=or_expr), "strict"))
+            # 优先用带同义词的扩展查询
             if exp_expr and exp_expr != or_expr:
-                strategies.append(("ft_or_exp", strict, dict(ft_match, expr=exp_expr), "strict"))
-            strategies.append(("ft_or", lv_date, dict(ft_match, expr=or_expr), "date_relaxed"))
-            strategies.append(("ft_or", lv_type, dict(ft_match, expr=or_expr), "type_relaxed"))
-            strategies.append(("ft_or", lv_kw, dict(ft_match, expr=or_expr), "region_relaxed"))
-            # FT 走完仍不足 → LIKE 关键词兜底
-            strategies.append(("like_or", lv_kw, {"kind": "like"}, "like"))
+                strategies.append(("ft_or_exp", _lv, dict(ft_match, expr=exp_expr), "soft"))
+            strategies.append(("ft_or", _lv, dict(ft_match, expr=or_expr), "soft"))
+            # FT 无结果 → LIKE 兜底
+            strategies.append(("like_or", _lv, {"kind": "like"}, "like"))
         else:
-            meta["match_mode"] = "like"   # 全是短词，直接 LIKE 老路
-            meta["relax_level"] = "strict"
+            meta["match_mode"] = "like"
+            strategies.append(("like_or", _lv, {"kind": "like"}, "like"))
     else:
-        # 索引缺失 / 无关键词：原 4 级 LIKE 语义不变
+        # 索引缺失 / 无关键词 → LIKE
         meta["match_mode"] = "like"
-        strategies = [
-            ("like_and", strict, {"kind": "like"}, "strict"),
-            ("like_and", lv_date, {"kind": "like"}, "date_relaxed"),
-            ("like_and", lv_type, {"kind": "like"}, "type_relaxed"),
-            ("like_and", lv_kw, {"kind": "like"}, "region_relaxed"),
-        ]
+        strategies.append(("like_or", _lv, {"kind": "like"}, "like"))
 
-    if not strategies:
-        # 索引缺失 / 无关键词 / 全部短词 → 原 4 级 LIKE 语义不变
-        meta["match_mode"] = "like"
-        strategies = [
-            ("like_and", strict, {"kind": "like"}, "strict"),
-            ("like_and", lv_date, {"kind": "like"}, "date_relaxed"),
-            ("like_and", lv_type, {"kind": "like"}, "type_relaxed"),
-            ("like_and", lv_kw, {"kind": "like"}, "region_relaxed"),
-        ]
-
-    # 逐层累积：不足 MIN_CANDIDATES 就继续放宽合并，达到目标或用尽为止
+    # 逐层累积
     merged: Dict[int, Dict[str, Any]] = {}
     order: List[str] = []
-    first_mode, first_relax = strategies[0][0], strategies[0][3]
-    max_relax = first_relax
-    relax_rank = {"strict": 0, "date_relaxed": 1, "type_relaxed": 2,
-                  "region_relaxed": 3, "like": 4}
+    first_mode = strategies[0][0] if strategies else "latest"
+    
     for mode, lv, match, relax in strategies:
         rows = _fetch_rows(cond, lv, match)
         for r in rows:
             if r["id"] not in merged:
                 merged[r["id"]] = r
                 order.append(mode)
-        if relax_rank.get(relax, 0) > relax_rank.get(max_relax, 0):
-            max_relax = relax
         if len(merged) >= MIN_CANDIDATES:
             break
 
     if merged:
-        # 诊断用：首层模式 + 实际达到的最宽放宽级别
         meta["match_mode"] = first_mode
-        meta["relax_level"] = max_relax
+        meta["relax_level"] = "soft"
         candidates = [merged[k] for k in merged]
-        date_relaxed = has_date and max_relax != "strict"
         meta["layer_counts"] = {m: order.count(m) for m in set(order)}
-        return candidates, date_relaxed, meta
+        return candidates, False, meta
 
-    # 所有策略 0 行 → 最终兜底：纯时间倒序，交给打分层过滤
-    rows = _fetch_rows(dict(cond, keywords=[]), lv_kw, None)
+    # 所有策略 0 行 → 最终兜底：纯时间倒序
+    rows = _fetch_rows(dict(cond, keywords=[]), _lv, None)
     meta["match_mode"] = "latest"
     meta["relax_level"] = "latest"
     return rows, has_date, meta
@@ -356,7 +336,9 @@ def search_candidates(cond: Dict[str, Any]
 def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
                 match: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """按一层策略取候选。match: {"kind":"ft","cols":[...],"expr":...} / {"kind":"like"} / None(纯最新)。
-    严禁 SELECT content / content_text 大列（snippet 只取 LEFT 前 400 字）。"""
+    严禁 SELECT content / content_text 大列（snippet 只取 LEFT 前 400 字）。
+    
+    【优化】region/date/type/group 改为软过滤（加权排序），不再硬剔除。"""
     from app.database import SessionLocal
     db = SessionLocal()
     try:
@@ -365,14 +347,14 @@ def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
         rank_expr_parts = []
         keywords = cond.get("keywords") or []
         ft_expr = None
-
+        
+        # ===== 关键词匹配（硬过滤）=====
         if match and match["kind"] == "ft":
             ft_expr = match["expr"]
             match_cols = ", ".join(f"b.`{c}`" for c in match["cols"])
             where.append(f"MATCH({match_cols}) AGAINST(:ft IN BOOLEAN MODE) > 0")
             params["ft"] = ft_expr
         elif match and match["kind"] == "like":
-            # LIKE 兜底层同样带上 synonyms（地区展开词/同义词），避免口语区域词召回过少
             words = list(keywords)
             for s in cond.get("synonyms") or []:
                 if s and s not in words:
@@ -389,51 +371,66 @@ def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
                     f"b.title LIKE :kw{i} OR b.content_text LIKE :kw{i}"
                     for i in range(len(keywords))
                 ) + ")")
-        # match 为 None → 纯最新，无关键词条件
 
+        # ===== 软过滤加权（region/date/type/group）=====
+        # 地区匹配加分
+        code = str(cond.get("region_code") or "").strip()
+        if len(code) == 6 and code.isdigit():
+            if code.endswith("0000"):
+                params["_rp"] = code[:2] + "%"
+                rank_expr_parts.append("(CASE WHEN b.region_code LIKE :_rp THEN 5 ELSE 0 END)")
+            elif code.endswith("00"):
+                params["_rp"] = code[:4] + "%"
+                rank_expr_parts.append("(CASE WHEN b.region_code LIKE :_rp THEN 5 ELSE 0 END)")
+            else:
+                params["_rp"] = code
+                rank_expr_parts.append("(CASE WHEN b.region_code = :_rp THEN 5 ELSE 0 END)")
+        
+        # 日期范围加分
+        if cond.get("date_from"):
+            params["_df"] = cond["date_from"]
+            rank_expr_parts.append("(CASE WHEN b.publish_time >= :_df THEN 3 ELSE 0 END)")
+        if cond.get("date_to"):
+            params["_dt"] = cond["date_to"] + " 23:59:59"
+            rank_expr_parts.append("(CASE WHEN b.publish_time <= :_dt THEN 3 ELSE 0 END)")
+        
+        # 公告类型加分
+        if cond.get("notice_type"):
+            nid = _notice_type_id(cond["notice_type"])
+            if nid:
+                params["_nt"] = nid
+                rank_expr_parts.append("(CASE WHEN b.notice_type_id = :_nt THEN 4 ELSE 0 END)")
+        
+        # 招采类型加分
+        if cond.get("procure_type"):
+            params["_pt"] = f"%{cond['procure_type']}%"
+            rank_expr_parts.append("(CASE WHEN b.procure_type LIKE :_pt THEN 3 ELSE 0 END)")
+        
+        # 客群加分
+        if cond.get("customer_group"):
+            params["_cg"] = cond["customer_group"]
+            rank_expr_parts.append("(CASE WHEN b.customer_group = :_cg THEN 2 ELSE 0 END)")
+        
+        # ===== 预算过滤（保留硬过滤，因为超出预算的结果无意义）=====
+        if cond.get("budget_min") is not None:
+            where.append("b.budget >= :bmin")
+            params["bmin"] = cond["budget_min"] * 10000
+        if cond.get("budget_max") is not None:
+            where.append("b.budget <= :bmax")
+            params["bmax"] = cond["budget_max"] * 10000
+
+        # ===== 构建 ORDER BY =====
         rank_expr = " + ".join(rank_expr_parts) if rank_expr_parts else ""
-
-        if lv.get("region"):
-            code = str(cond.get("region_code") or "").strip()
-            if len(code) == 6 and code.isdigit():
-                # 省码(尾4位0)按前2位匹配，市码(尾2位0)按前4位匹配，区县精确匹配
-                if code.endswith("0000"):
-                    where.append("b.region_code LIKE :region")
-                    params["region"] = code[:2] + "%"
-                elif code.endswith("00"):
-                    where.append("b.region_code LIKE :region")
-                    params["region"] = code[:4] + "%"
-                else:
-                    where.append("b.region_code = :region")
-                    params["region"] = code
-        if lv.get("date"):
-            if cond.get("date_from"):
-                where.append("b.publish_time >= :df")
-                params["df"] = cond["date_from"]
-            if cond.get("date_to"):
-                where.append("b.publish_time <= :dt")
-                params["dt"] = cond["date_to"] + " 23:59:59"
-        if lv.get("extra"):
-            if cond.get("notice_type"):
-                nid = _notice_type_id(cond["notice_type"])
-                if nid:
-                    where.append("b.notice_type_id = :nt")
-                    params["nt"] = nid
-            if cond.get("procure_type"):
-                where.append("b.procure_type LIKE :pt")
-                params["pt"] = f"%{cond['procure_type']}%"
-            if cond.get("customer_group"):
-                where.append("b.customer_group = :cg")
-                params["cg"] = cond["customer_group"]
-
         if ft_expr:
-            # 用别名排序（WHERE 里已有同一表达式）；MATCH 列必须与索引列一致
-            order_clause = "ft_rank DESC, b.publish_time DESC"
             ft_select = f", MATCH({match_cols}) AGAINST(:ft IN BOOLEAN MODE) AS ft_rank"
+            if rank_expr:
+                order_clause = f"(ft_rank + {rank_expr}) DESC, b.publish_time DESC"
+            else:
+                order_clause = "ft_rank DESC, b.publish_time DESC"
         else:
-            order_clause = (f"({rank_expr}) DESC, b.publish_time DESC"
-                            if rank_expr else "b.publish_time DESC")
+            order_clause = f"({rank_expr}) DESC, b.publish_time DESC" if rank_expr else "b.publish_time DESC"
             ft_select = ""
+        
         sql = text(f"""
             SELECT b.id, b.title, b.tenderee, b.agency, b.procure_type,
                    b.publish_time, b.deadline, b.budget, b.winner_unit,
