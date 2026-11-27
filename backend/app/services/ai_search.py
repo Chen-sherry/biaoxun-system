@@ -471,10 +471,18 @@ def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
 
 SCORE_PROMPT = """标讯相关性评分员。给候选公告打 0~100 分。
 
-规则：
-1. 主题吻合是前提——核心意图不吻合必须 <60，无论地区/类型多吻合
-2. 主题吻合后，按偏差扣分：地区不符 −15、类型不符 −10、时间不符 −10（未限定维度不扣）
-3. 每批应拉开档位，区分相对优劣
+评分规则：
+1. 基础分 70：只要标题或内容与检索意图有部分相关，起评 70 分
+2. 加分项（最高 100）：
+   - 核心主体完全匹配（如搜"运营商"且标题含移动/联通/电信/通信）+15
+   - 地区完全匹配 +10
+   - 公告类型匹配 +5
+3. 减分项（最低 0）：
+   - 主题完全不相关 -50
+   - 地区不符 -15
+   - 时间明显不符 -10
+
+注意：用户搜"华南地区运营商"时，"通信""信息化""网络"等相关领域也应给 60-80 分，不要只认三大运营商名称。
 
 只输出 JSON：{"results":[{"id":1,"score":88}]}"""
 
@@ -544,7 +552,7 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
     prompt = svc.get_prompt("prompt.search_score", SCORE_PROMPT)
     items = [
         {"id": c["id"], "title": c["title"],
-         "snippet": (c.get("snippet") or "")[:80],
+         "snippet": (c.get("snippet") or "")[:120],
          "notice_type": c.get("notice_type"),
          "region": c.get("region_name")}
         for c in batch
