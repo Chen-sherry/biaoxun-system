@@ -14,12 +14,12 @@
             @change="onToggleSwitch"
           />
           <el-tooltip placement="bottom" :content="aiEnabled
-            ? '新入库标讯缺字段时会调 AI 补全，成功后展示 AI 标记'
-            : '新入库标讯不再调 AI，统一进入待审核，由人工核对填写'">
+            ? '提取完整的标讯正常自动通过；缺字段的会先让 AI 补全'
+            : '提取完整的标讯照常自动通过；缺字段的转人工审核（不调 AI）'">
             <el-icon class="tip-icon"><QuestionFilled /></el-icon>
           </el-tooltip>
           <span class="switch-hint" :class="{ off: !aiEnabled }">
-            {{ aiEnabled ? '缺字段的标讯会先走 AI 补全' : '当前所有新标讯统一转人工审核' }}
+            {{ aiEnabled ? '缺字段的标讯先由 AI 补全' : '缺字段的转人工，提取完整的正常发布' }}
           </span>
         </div>
       </div>
@@ -119,7 +119,9 @@ async function onToggleSwitch(val: boolean) {
   switchLoading.value = true
   try {
     await updateExtractSwitch(val)
-    ElMessage.success(val ? '已开启 AI 自动提取' : '已关闭：新标讯统一转人工审核')
+    ElMessage.success(val
+      ? '已开启 AI 辅助：缺字段的标讯先由 AI 补全'
+      : '已关闭 AI：提取完整的正常发布，缺字段的转人工')
   } catch {
     aiEnabled.value = !val // 失败回滚
   } finally {

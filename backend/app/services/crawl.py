@@ -855,7 +855,7 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                 if miss and not bool(ai_svc.get("param.ai_extract_enabled", True)):
                     mapped["status"] = 0
                     stats["pending"] += 1
-                    logger.info("[crawl] AI 提取开关关闭→转人工 title=%s 缺=%s",
+                    logger.info("[crawl] 提取不完整且 AI 开关关闭→转人工 title=%s 缺=%s",
                                 str(mapped.get("title"))[:40], miss)
                     miss = []
                 if miss:
