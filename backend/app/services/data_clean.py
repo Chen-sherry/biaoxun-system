@@ -573,7 +573,45 @@ _WINNER_AMOUNT_RES = [
     re.compile(r"(?:成交|出让|竞得)(?:价|金额)\s*[（(][^）)]*[）)]?"
                r"\s*[：:为约]?\s*([\d,]+(?:\.\d+)?)\s*(亿元|万元|元)"),
 ]
+# 单位写在表头的表格：「成交价（万元）482.1375」——数值不带单位，单独解析
+_WINNER_AMOUNT_HEADER_UNIT_RE = re.compile(
+    r"(?:成交|中标|出让|竞得|挂牌)(?:价|金额|总价)\s*"
+    r"[（(]\s*(亿元|万元)\s*[）)]\s*[：:为约]?\s*"
+    r"([\d,]+(?:\.\d+)?)")
+
 _WINNER_UNIT_BAD = ("未开标", "详见", "无", "待定", "废标", "流标", "否决")
+
+# 成交金额下限：低于此值基本都是标书费/工本费误抓
+_MIN_WIN_AMOUNT = 1000
+
+# 浙江/江苏式中标候选人表格（表格被转成逐行文本）：
+#   上海建工四建集团有限公司\n148,673,631.00元\n530天
+# 表头（投标报价/工期）与数据分行，_WINNER_AMOUNT_RES 的邻接正则抓不到，单独解析
+_CANDIDATE_TABLE_RE = re.compile(
+    r"([^\n\d|]{4,60}?)\s*\n+\s*([\d,]+(?:\.\d+)?)\s*元\s*\n+\s*(\d{2,4})\s*(?:日历天|个日历天|天)")
+
+
+def extract_candidate_table(text: str) -> dict:
+    """候选人公示表格解析：第一候选人名称 + 投标报价（元）
+
+    仅在中标候选人/投标报价语境下启用，返回 {"winner_unit":..,"win_amount":..}（可部分）
+    """
+    if not text or ("中标候选人" not in text and "投标报价" not in text):
+        return {}
+    for m in _CANDIDATE_TABLE_RE.finditer(text):
+        name = m.group(1).strip().strip("| 　")
+        if not name or len(name) < 4 or name in _WINNER_UNIT_BAD:
+            continue
+        if any(w in name for w in ("投标人", "中标候选人", "序号", "报价", "工期")):
+            continue
+        try:
+            val = float(m.group(2).replace(",", ""))
+        except ValueError:
+            continue
+        if val < _MIN_WIN_AMOUNT:
+            continue
+        return {"winner_unit": name, "win_amount": val}
+    return {}
 
 
 # 编号值后面若紧跟这些词，说明吞到了相邻表格列（「…2025-024采购方式竞争性磋商…」），截断
@@ -761,8 +799,23 @@ def extract_winner(text: str) -> dict:
                 val *= 100000000
             elif unit in ("万元", "万"):
                 val *= 10000
+            if val < _MIN_WIN_AMOUNT:
+                # 标书费/工本费（如「售价：150元」）不是成交金额
+                continue
             out["win_amount"] = val
             break
+    if not out.get("win_amount"):
+        # 单位在表头：「成交价（万元）482.1375」
+        m = _WINNER_AMOUNT_HEADER_UNIT_RE.search(flat)
+        if m:
+            try:
+                val = float(m.group(2).replace(",", ""))
+            except ValueError:
+                val = 0
+            if val > 0:
+                val = val * (100000000 if m.group(1) == "亿元" else 10000)
+                if val >= _MIN_WIN_AMOUNT:
+                    out["win_amount"] = val
     return out
 
 
@@ -820,6 +873,13 @@ def extract_fields_from_text(title: str, text: str, conn=None,
             out["winner_unit"] = win["winner_unit"]
         if not cur.get("win_amount") and win.get("win_amount"):
             out["win_amount"] = win["win_amount"]
+        # 候选人表格兜底（浙江/江苏式分行表格，flat 已丢换行，用原文）
+        if not (cur.get("winner_unit") and cur.get("win_amount")):
+            tab = extract_candidate_table(text or "")
+            if not cur.get("winner_unit") and not out.get("winner_unit") and tab.get("winner_unit"):
+                out["winner_unit"] = tab["winner_unit"]
+            if not cur.get("win_amount") and not out.get("win_amount") and tab.get("win_amount"):
+                out["win_amount"] = tab["win_amount"]
     # 地区：正文标签没写时，用正文里出现的市/省名反查 dict_region（只填空值）
     if (not cur.get("region_code") or cur.get("region_code") == "-1") and conn is not None:
         try:

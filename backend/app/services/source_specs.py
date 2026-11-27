@@ -121,9 +121,12 @@ def _money_from_table(html: str, key_variants: list[str],
     except Exception:
         text = re.sub(r"<[^>]+>", "", html)
 
-    money_plain = r"(?:人民币|￥|¥|¥)?\s*(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(亿元|万元|元)"
+    # 数字前不能紧跟数字/逗号/小数点，否则 "148,530,915.00元" 会被截成 "915.00元"
+    money_plain = (r"(?<![\d,.])(?:人民币|￥|¥)?\s*"
+                   r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(亿元|万元|元)")
     # 无单位兜底：¥1,234,567.00 / 980000.00 这种
-    money_no_unit = r"(?:￥|¥|¥)?\s*(\d{1,3}(?:,\d{3})+|\d+\.\d{1,2})(?!\d)"
+    money_no_unit = (r"(?<![\d,.])(?:￥|¥)?\s*"
+                     r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d{1,2})(?!\d)")
 
     if prefer_regex_over_table:
         # ggzy 专用：只认"中标/成交/总价"，不认起始价/预算
@@ -158,6 +161,52 @@ def _money_from_table(html: str, key_variants: list[str],
         m2 = re.search(money_no_unit, blob)
         if m2:
             return float(m2.group(1).replace(",", ""))
+    return None
+
+
+def _table_column_amount(html: str, keys: tuple) -> Optional[float]:
+    """表格列定位取金额：「成交价（万元）」表头 → 取数据行同列数值
+
+    适配土地挂牌/成交公示表：表头行有「成交价(万元)」，数值在后续行的同列。
+    列的先后顺序和行列数各站不一，用表头文本定位列号最可靠。
+    """
+    if not html:
+        return None
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return None
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        for ri, tr in enumerate(rows):
+            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+            for ci, ctext in enumerate(cells):
+                if not any(k in ctext for k in keys):
+                    continue
+                unit = "元"
+                if "万元" in ctext:
+                    unit = "万元"
+                elif "亿元" in ctext:
+                    unit = "亿元"
+                # 数值在同一表头行的相邻单元格，或后续数据行的同列
+                cand_cells = []
+                if ci + 1 < len(cells):
+                    cand_cells.append(cells[ci + 1])
+                for nxt in rows[ri + 1:ri + 6]:
+                    c2 = [c.get_text(" ", strip=True) for c in nxt.find_all(["td", "th"])]
+                    if ci < len(c2):
+                        cand_cells.append(c2[ci])
+                for cv in cand_cells:
+                    m = re.search(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)", cv or "")
+                    if m:
+                        v = float(m.group(1).replace(",", ""))
+                        if v <= 0:
+                            continue
+                        if unit == "万元":
+                            v *= 1e4
+                        elif unit == "亿元":
+                            v *= 1e8
+                        return v
     return None
 
 
@@ -350,13 +399,18 @@ def _extract_from_ggzy(content_html: str, raw: dict) -> Dict[str, Any]:
             out["agency"] = ag
 
     # --- C. 中标金额 / 成交价 ---
-    # ggzy 里"挂牌价/起始价/出让价"都是起始价不是成交价，必须优先正则兜底
-    wa = _money_from_table(
+    # 优先表格列定位（土地挂牌「成交价（万元）」表头 + 数据行同列），最可靠
+    wa = _table_column_amount(
         content_html,
-        ["中标金额", "成交金额", "总成交金额", "中标价", "成交价",
-         "成交总价", "总中标金额"],
-        prefer_regex_over_table=True)
-    if wa is not None and wa > 0:
+        ("成交价", "成交金额", "成交总价", "中标金额", "中标价"))
+    # 其次正则：只认"中标/成交/总价"，不认起始价/预算
+    if wa is None:
+        wa = _money_from_table(
+            content_html,
+            ["中标金额", "成交金额", "总成交金额", "中标价", "成交价",
+             "成交总价", "总中标金额"],
+            prefer_regex_over_table=True)
+    if wa is not None and wa >= 1000:  # 过滤标书费/工本费
         out["win_amount"] = wa
 
     # --- D. 表格中标候选人兜底（少数地方交易网有标准候选人表格） ---

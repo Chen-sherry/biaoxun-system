@@ -149,8 +149,76 @@ def _parse_json(content: str) -> Optional[Dict]:
         return None
 
 
+_AI_MONEY_RE = re.compile(
+    r"(?<![\d,.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(亿元|万元|元)")
+# 表头写单位的表格：「成交价（万元）482.1375」——数字本身不带单位
+_HEADER_UNIT_RE = re.compile(r"[（(]\s*(亿元|万元)\s*[）)]")
+
+
+def _amount_candidates(text: str) -> List[float]:
+    """正文里出现的所有金额 → 元（去重）"""
+    out: List[float] = []
+    for m in _AI_MONEY_RE.finditer(text or ""):
+        try:
+            v = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        u = m.group(2)
+        if u == "亿元":
+            v *= 1e8
+        elif u == "万元":
+            v *= 1e4
+        if v > 0:
+            out.append(v)
+    # 表头单位：括号后 60 字内的第一个数字
+    for hm in _HEADER_UNIT_RE.finditer(text or ""):
+        tail = (text or "")[hm.end():hm.end() + 60]
+        mm = re.search(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)", tail)
+        if not mm:
+            continue
+        try:
+            v = float(mm.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        if hm.group(1) == "亿元":
+            v *= 1e8
+        else:
+            v *= 1e4
+        if v > 0:
+            out.append(v)
+    return out
+
+
+def reconcile_win_amount(value: Optional[float], text: str) -> Optional[float]:
+    """AI 金额必须能在正文金额中找到对应值，否则丢弃。
+
+    2026-11-27 修复：AI 常把「万元」当纯数字返回（148,673,631 元 → 915），
+    或从表格里挑错数字（150 / 800），入库后金额少 1 万倍甚至完全对不上。
+    规则：v 与正文某金额误差 ≤2% → 采用；v×10000 能对上 → 说明 AI 少乘万，按元修正；
+    都对不上 → None（宁可空着，也不展示错误金额）。
+    """
+    if value is None or value <= 0:
+        return None
+    # 小于 1000 元的"金额"基本都是标书费/工本费，不是成交金额
+    if value < 1000:
+        return None
+    cands = _amount_candidates(text)
+    if not cands:
+        return None
+
+    def close(a: float, b: float) -> bool:
+        return abs(a - b) <= max(1.0, b * 0.02)
+
+    if any(close(value, c) for c in cands):
+        return value
+    v2 = value * 10000
+    if any(close(v2, c) for c in cands):
+        return v2
+    logger.info("[ai_extract] 丢弃不可信金额 %s（正文对不上）", value)
+    return None
+
+
 def _clean_value(field: str, value):
-    """按字段类型清洗 AI 返回值；无效 → None（视为确认没有）"""
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -272,6 +340,8 @@ def ai_extract_missing(title: str, content_text: str,
     out: Dict = {}
     for f in missing:
         v = _clean_value(f, raw_json.get(f))
+        if f == "win_amount" and v is not None:
+            v = reconcile_win_amount(v, content_text or "")
         if v is not None:
             out[f] = v
     for ck in _CLASS_KEYS:
