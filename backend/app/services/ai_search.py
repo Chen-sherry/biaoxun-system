@@ -44,6 +44,33 @@ SCORE_WORKERS = 4      # 打分批次并行度 —— 提高并行度
 FT_INDEX_CACHE_S = 300   # FULLTEXT 索引存在性探测缓存
 LIB_DATE_CACHE_S = 600   # 库内日期范围缓存
 
+# 大区/口语区域 → 覆盖地区的国标码前缀（省用 2 位，市用 4 位）
+# 用于把「华南/珠三角」这类宏观词落成可判定的地区约束，供地区维度精确判分。
+REGION_GROUPS: Dict[str, Tuple[str, List[str]]] = {
+    "华南": ("华南", ["44", "45", "46", "81", "82"]),            # 广东 广西 海南 香港 澳门
+    "华东": ("华东", ["31", "32", "33", "34", "35", "36", "37"]),  # 沪苏浙皖闽赣鲁
+    "华北": ("华北", ["11", "12", "13", "14", "15"]),            # 京津冀晋蒙
+    "华中": ("华中", ["41", "42", "43"]),                        # 豫鄂湘
+    "西北": ("西北", ["61", "62", "63", "64", "65"]),            # 陕甘青宁新
+    "西南": ("西南", ["50", "51", "52", "53", "54"]),            # 渝川贵云藏
+    "东北": ("东北", ["21", "22", "23"]),                        # 辽吉黑
+    "珠三角": ("珠三角", ["4401", "4403", "4404", "4406", "4407", "4412", "4413", "4419", "4420"]),
+    "长三角": ("长三角", ["31", "3201", "3202", "3205", "3301", "3302"]),
+    "京津冀": ("京津冀", ["11", "12", "1301"]),
+    "粤北": ("粤北", ["4402", "4418", "4453"]),                  # 韶关 清远 云浮
+    "粤东": ("粤东", ["4405", "4451", "4452", "4415"]),          # 汕头 潮州 揭阳 汕尾
+    "粤西": ("粤西", ["4408", "4409", "4417"]),                  # 湛江 茂名 阳江
+}
+
+
+def _detect_region_group(query: str) -> Optional[Tuple[str, List[str]]]:
+    """从用户原句里识别大区/口语区域词，返回 (显示名, 地区码前缀列表)；没命中返回 None。"""
+    q = query or ""
+    for name in sorted(REGION_GROUPS, key=len, reverse=True):  # 长词优先，避免"粤东"被"东"类干扰
+        if name in q:
+            return REGION_GROUPS[name]
+    return None
+
 
 # ---------------------------------------------------------------- #
 #  1. 大白话 → 结构化检索条件
@@ -539,8 +566,25 @@ def _cond_note(cond: Optional[Dict[str, Any]]) -> str:
     return "\n用户限定条件（只对这些维度扣分）：" + "；".join(parts)
 
 
-def _compose_score(s: Dict[str, Any], cond: Optional[Dict[str, Any]]) -> int:
+def _region_subscore(cond: Optional[Dict[str, Any]], region_code: Any) -> Optional[int]:
+    """按大区落成的地区码前缀，对候选的 region_code 做确定性命中判定。
+    命中 100，不符 0；无前缀或无候选码时返回 None（交给 LLM 的地区分兜底）。"""
+    prefixes = (cond or {}).get("region_prefixes")
+    if not prefixes:
+        return None
+    code = str(region_code or "").strip()
+    if not code:
+        return None
+    for p in prefixes:
+        if code.startswith(p):
+            return 100
+    return 0
+
+
+def _compose_score(s: Dict[str, Any], cond: Optional[Dict[str, Any]],
+                   cand: Optional[Dict[str, Any]] = None) -> int:
     """把 LLM 返回的四维吻合度按权重合成总分（代码确定性加权，避免模型自求和出错）。
+    地区维度：大区词（华南等）已落成地区码前缀，用候选 region_code 精确命中，不依赖模型。
     用户未限定的维度直接计满分权重；主题无关/地区不符时按硬规则压分。"""
     if s.get("score") is not None and s.get("topic") is None:
         return _to_score(s.get("score"))   # 兼容旧格式（直接给了总分）
@@ -554,18 +598,27 @@ def _compose_score(s: Dict[str, Any], cond: Optional[Dict[str, Any]]) -> int:
     topic = _v("topic")
     total = topic / 100 * W_TOPIC
 
-    has_region = bool(cond and (cond.get("region_code") or cond.get("region_name")))
+    has_region = bool(cond and (cond.get("region_code") or cond.get("region_name")
+                                or cond.get("region_prefixes")))
     has_type = bool(cond and cond.get("notice_type"))
     has_time = bool(cond and (cond.get("date_from") or cond.get("date_to")))
 
-    total += (_v("region") / 100 * W_REGION) if has_region else W_REGION
+    region_zero = False
+    if has_region:
+        rs = _region_subscore(cond, (cand or {}).get("region_code"))
+        rv = rs if rs is not None else _v("region")
+        total += rv / 100 * W_REGION
+        region_zero = (rv == 0)
+    else:
+        total += W_REGION
+
     total += (_v("type") / 100 * W_TYPE) if has_type else W_TYPE
     total += (_v("time") / 100 * W_TIME) if has_time else W_TIME
     total = int(round(total))
 
     if topic == 0:
         total = min(total, 25)
-    if has_region and _v("region") == 0:
+    if has_region and region_zero:
         total = min(total, 60)
     return max(0, min(100, total))
 
@@ -605,7 +658,7 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
     out = []
     for c in batch:
         s = by_id.get(c["id"], {})
-        out.append({**c, "score": _compose_score(s, cond),
+        out.append({**c, "score": _compose_score(s, cond, c),
                     "reason": (s.get("reason") or "")[:120]})
     return out
 
@@ -774,6 +827,12 @@ def ai_search(query: str, limit: int = 120,
 
     t0 = time.time()
     cond, llm_translate_ok = translate_query(query)
+    # 大区/口语区域（华南/珠三角…）→ 落成地区码前缀，供地区维度精确判定（仅当未给精确区划码时）
+    if not cond.get("region_code"):
+        grp = _detect_region_group(query)
+        if grp:
+            cond["region_name"] = cond.get("region_name") or grp[0]
+            cond["region_prefixes"] = grp[1]
     candidates, date_relaxed, meta = search_candidates(cond)
     candidates, budget_dropped = _apply_budget_filter(cond, candidates)
     scored, score_diag = score_candidates(query, candidates, date_relaxed=date_relaxed,
