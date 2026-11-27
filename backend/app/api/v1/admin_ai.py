@@ -84,17 +84,21 @@ def list_snapshots(key: str, db: Session = Depends(get_db), _: SysUser = AdminRo
 
 
 @router.post("/{key:path}/rollback", summary="回滚到某快照（传 snapshot_id）")
-def rollback_setting(key: str, snapshot_id: int, db: Session = Depends(get_db),
+def rollback_setting(key: str, payload: BaseModel, db: Session = Depends(get_db),
                      user: SysUser = Depends(get_current_user)):
+    """payload 需含 snapshot_id（int）。"""
+    snap_id = getattr(payload, 'snapshot_id', None)
+    if snap_id is None:
+        raise HTTPException(400, '缺少 snapshot_id')
     from app.models.ai_setting import AISettingSnapshot
-    snap = db.query(AISettingSnapshot).filter(AISettingSnapshot.id == snapshot_id).first()
+    snap = db.query(AISettingSnapshot).filter(AISettingSnapshot.id == snap_id).first()
     if not snap or snap.setting_key != key:
         raise HTTPException(404, "快照不存在或 key 不匹配")
     try:
-        svc.update_one(db, key, snap.old_value, user.id, user.username, remark=f"回滚到 #{snapshot_id}")
+        svc.update_one(db, key, snap.old_value, user.id, user.username, remark=f"回滚到 #{snap_id}")
     except KeyError:
         raise HTTPException(404, f"setting {key} 不存在")
-    return ApiResponse.ok({"key": key, "rolled_back_to": snapshot_id})
+    return ApiResponse.ok({"key": key, "rolled_back_to": snap_id})
 
 
 # ============= 连通性测试 =============
