@@ -35,8 +35,8 @@ from app.services import ai_setting_service as svc
 logger = logging.getLogger(__name__)
 
 # ---- 记忆窗口（①）----
-HISTORY_CHAR_BUDGET = 24000   # 历史总字符预算（约 6~8k token）
-HISTORY_MIN_KEEP = 60         # 至少保留最近 N 条（预算内也保证长对话不硬断）
+HISTORY_CHAR_BUDGET = 8000    # 历史总字符预算（约 4~5k token，控制对话成本）
+HISTORY_MIN_KEEP = 6          # 至少保留最近 N 条（预算内也保证长对话不硬断）
 
 # ---- 工具循环（③）----
 TOOL_ROUNDS = 3               # 工具轮上限
@@ -285,16 +285,14 @@ async def _exec_tool(name: str, args: Dict[str, Any],
             if not query:
                 return {"error": "query 不能为空"}
             # ai_search 内含 LLM 转译+打分，线程池执行避免阻塞事件循环
-            data = await asyncio.to_thread(ai_search, query, limit=10)
+            # score_cap=24：对话场景只要 Top 几条，不必按检索页的 60 条打分（省 token）
+            data = await asyncio.to_thread(ai_search, query, 10, 24)
             items = data.get("items") or []
             brief = [{
                 "id": it.get("id"),
                 "title": it.get("title"),
                 "publish_time": it.get("publish_time"),
                 "score": it.get("score"),
-                "reason": it.get("reason"),
-                "budget": it.get("budget"),
-                "tenderee": it.get("tenderee"),
             } for it in items]
             for b in brief:
                 if len(results_acc) >= 10:

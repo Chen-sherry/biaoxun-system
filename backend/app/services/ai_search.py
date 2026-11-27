@@ -31,10 +31,11 @@ logger = logging.getLogger(__name__)
 
 HIGH_SCORE = 75        # >= 此分：高度相关
 MID_SCORE = 60         # 60~74：较相关，辅助展示；<60 丢弃
-CANDIDATE_LIMIT = 120  # 送入 LLM 打分的候选上限
+CANDIDATE_LIMIT = 120  # 召回池上限（DB 粗筛）
+SCORE_CAP = 60         # 默认送 LLM 打分的候选上限（先本地关键词粗排取 Top，控制成本）
 MIN_CANDIDATES = 40    # 单层召回不足此数则继续放宽并累积合并（避免首层非空即停导致召回过少）
 FALLBACK_MIN_SCORE = 40  # 兜底展示的分数线：最高分低于此值视为真无关，返回空态而非垃圾
-SCORING_CHUNK = 40     # 每次打分调用的候选批量
+SCORING_CHUNK = 30     # 每次打分调用的候选批量
 SCORE_WORKERS = 3      # 打分批次并行度
 
 FT_INDEX_CACHE_S = 300   # FULLTEXT 索引存在性探测缓存
@@ -443,7 +444,7 @@ SCORE_PROMPT = """你是标讯（招投标公告）相关性评分员。根据�
 
 档位分布提示：主题相关且至少一项限定条件吻合的候选应落在 60~74；关键词仅沾边、核心意图偏离的才放 40~59。不要把大部分候选压到 40 分以下，每批都应区分出相对优劣。
 
-只输出 JSON 对象，格式：{{"results":[{{"id": 1, "score": 88, "reason": "一句话理由"}}]}}，不要任何其他文字。"""
+只输出 JSON 对象，格式：{"results":[{"id": 1, "score": 88}, {"id": 2, "score": 45}]}，不要理由、不要任何其他文字。"""
 
 
 def _lib_date_note() -> Tuple[str, str]:
@@ -511,12 +512,9 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
     prompt = svc.get_prompt("prompt.search_score", SCORE_PROMPT)
     items = [
         {"id": c["id"], "title": c["title"],
-         "snippet": (c.get("snippet") or "")[:160],
-         "tenderee": c.get("tenderee"), "procure_type": c.get("procure_type"),
+         "snippet": (c.get("snippet") or "")[:80],
          "notice_type": c.get("notice_type"),
-         "region": c.get("region_name"),
-         "publish_time": str(c.get("publish_time") or "")[:10],
-         "budget": c.get("budget")}
+         "region": c.get("region_name")}
         for c in batch
     ]
     scores = chat_json(
@@ -529,7 +527,7 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
         expect="array",
         json_mode=True,
         temperature=0,
-        max_tokens=6000,
+        max_tokens=2000,
         timeout=60,
         tag="score",
         model_override=model_cfg.get("model"),
@@ -549,14 +547,21 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
 def score_candidates(query: str, candidates: List[Dict[str, Any]],
                      date_relaxed: bool = False,
                      cond: Optional[Dict[str, Any]] = None,
+                     score_cap: Optional[int] = None,
                      ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """分批并行调用 DeepSeek 打分。单批失败只对该批降级本地分并计数。
+    score_cap：送 LLM 打分的候选上限（先用本地关键词粗排取 Top，控制 token 成本）。
     返回 (按分数降序的完整结果, 诊断 {batch_failures, llm_score_ok})。"""
     if not candidates:
         return [], {"batch_failures": 0, "llm_score_ok": False}
     model_cfg = svc.get_model("search")
     if not (model_cfg.get("api_key") or settings.deepseek_api_key):
         return _local_score(query, candidates), {"batch_failures": 0, "llm_score_ok": False}
+
+    cap = score_cap or SCORE_CAP
+    if len(candidates) > cap:
+        # 本地关键词粗排，只把最相关的一批送 LLM（召回池仍是 120，不打折召回）
+        candidates = _local_score(query, candidates)[:cap]
 
     date_note = ""
     if date_relaxed:
@@ -669,18 +674,21 @@ def _count_total(cond: Dict[str, Any]) -> Optional[int]:
         db.close()
 
 
-def ai_search(query: str, limit: int = 120) -> Dict[str, Any]:
+def ai_search(query: str, limit: int = 120,
+              score_cap: Optional[int] = None) -> Dict[str, Any]:
     """一次完整 AI 检索：转译 → 召回 → 预算过滤 → 打分 → 分档。
 
     items 返回全部打分结果（按分数降序，最多 limit 条）：前端默认只展示
     高相关（>=75），点「加载更多」按 60/40/20/0 分档逐级放宽，直到全部显示。
     最高分低于展示底线（FALLBACK_MIN_SCORE）视为真无关 → 返回空列表走空态。
+    score_cap：送 LLM 打分的候选条数上限（None=60；对话场景传 24 更省）。
     """
     t0 = time.time()
     cond, llm_translate_ok = translate_query(query)
     candidates, date_relaxed, meta = search_candidates(cond)
     candidates, budget_dropped = _apply_budget_filter(cond, candidates)
-    scored, score_diag = score_candidates(query, candidates, date_relaxed=date_relaxed, cond=cond)
+    scored, score_diag = score_candidates(query, candidates, date_relaxed=date_relaxed,
+                                          cond=cond, score_cap=score_cap)
 
     if scored and scored[0]["score"] < FALLBACK_MIN_SCORE:
         # 真无关（最高分都不到展示底线）→ 空态，不给用户看垃圾

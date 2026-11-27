@@ -132,7 +132,7 @@ INSERT IGNORE INTO ai_setting (setting_key, value, value_type, remark, idx_set) 
 
 档位分布提示：主题相关且至少一项限定条件吻合的候选应落在 60~74；关键词仅沾边、核心意图偏离的才放 40~59。不要把大部分候选压到 40 分以下，每批都应区分出相对优劣。
 
-只输出 JSON 对象，格式：{"results":[{"id": 1, "score": 88, "reason": "一句话理由"}]}，不要任何其他文字。',
+只输出 JSON 对象，格式：{"results":[{"id": 1, "score": 88}, {"id": 2, "score": 45}]}，不要理由、不要任何其他文字。',
  'text', 'AI 检索：相关性评分 Prompt', 'prompt'),
 
 -- ③ 基础参数
