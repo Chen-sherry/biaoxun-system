@@ -59,9 +59,10 @@ _OBJ_RE = re.compile(r"\{.*\}", re.S)
 _ARR_RE = re.compile(r"\[.*\]", re.S)
 
 
-def _build_payload(messages, *, temperature, max_tokens, tools, json_mode, tag) -> dict:
+def _build_payload(messages, *, temperature, max_tokens, tools, json_mode, tag,
+                   model_override: Optional[str] = None) -> dict:
     payload: dict[str, Any] = {
-        "model": settings.deepseek_model,
+        "model": model_override or settings.deepseek_model,
         "messages": messages,
         "temperature": temperature,
     }
@@ -74,6 +75,16 @@ def _build_payload(messages, *, temperature, max_tokens, tools, json_mode, tag) 
     return payload
 
 
+def _make_endpoint(base_url: Optional[str] = None, api_key: Optional[str] = None):
+    """生成 (url, headers)；base_url/api_key 传 None 时回退 config.py 默认。"""
+    url = f"{(base_url or settings.deepseek_base_url).rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key or settings.deepseek_api_key}",
+        "Content-Type": "application/json",
+    }
+    return url, headers
+
+
 async def achat(
     messages: list,
     *,
@@ -84,22 +95,26 @@ async def achat(
     json_mode: bool = False,
     retries: Optional[int] = None,
     tag: str = "",
+    model_override: Optional[str] = None,
+    base_url_override: Optional[str] = None,
+    api_key_override: Optional[str] = None,
 ) -> LLMResult:
-    """异步 chat completion。失败抛 LLMError。"""
-    if not settings.deepseek_api_key:
+    """异步 chat completion。失败抛 LLMError。
+
+    新：model_override / base_url_override / api_key_override 用于从 DB 动态指定
+    模型（不传则走 config.py 默认值）。
+    """
+    if not (api_key_override or settings.deepseek_api_key):
         raise LLMError("DEEPSEEK_API_KEY 未配置", kind="config")
 
     if retries is None:
         retries = settings.llm_max_retries
 
-    url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
-        "Content-Type": "application/json",
-    }
+    url, headers = _make_endpoint(base_url_override, api_key_override)
     payload = _build_payload(
         messages, temperature=temperature, max_tokens=max_tokens,
         tools=tools, json_mode=json_mode, tag=tag,
+        model_override=model_override,
     )
 
     last_err: Optional[LLMError] = None
@@ -249,6 +264,9 @@ async def achat_stream(
     tools: Optional[list] = None,
     retries: Optional[int] = None,
     tag: str = "",
+    model_override: Optional[str] = None,
+    base_url_override: Optional[str] = None,
+    api_key_override: Optional[str] = None,
 ):
     """流式 chat completion（async generator）。
 
@@ -258,23 +276,26 @@ async def achat_stream(
     yield ("error", str)               —— 内部错误（不抛，让上层决定如何处理）
 
     重试仅在首个 token 到达前执行；已流出则直接 yield error 终止，不重试。
+
+    新：model/base_url/api_key 支持 override（从 DB 动态指定）。
     """
-    if not settings.deepseek_api_key:
+    if not (api_key_override or settings.deepseek_api_key):
         yield ("error", "DEEPSEEK_API_KEY 未配置")
         return
 
     if retries is None:
         retries = settings.llm_max_retries
 
-    url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
+    url, _ = _make_endpoint(base_url_override, api_key_override)
     headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
+        "Authorization": f"Bearer {api_key_override or settings.deepseek_api_key}",
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
     }
     payload = _build_payload(
         messages, temperature=temperature, max_tokens=max_tokens,
         tools=tools, json_mode=False, tag=tag,
+        model_override=model_override,
     )
     payload["stream"] = True
     payload["stream_options"] = {"include_usage": True}

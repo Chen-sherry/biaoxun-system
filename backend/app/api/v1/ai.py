@@ -13,6 +13,7 @@ from app.schemas.bid import AIMatchRequest, MatchedBid
 from app.services.deepseek_match import match_bids_for_user
 from app.services.ai_chat import ai_chat, ai_chat_stream
 from app.services.ai_search import ai_search
+from app.services.ai_setting_service import get_param_int as _param_int
 from app.utils.response import ApiResponse
 
 router = APIRouter(prefix="/ai", tags=["AI 功能"])
@@ -54,7 +55,7 @@ def _chat_rate_limit(user_id: int) -> None:
     Redis 异常时放行（可用性优先），只记 warning。"""
     from datetime import datetime
     from app.config import settings
-    limit = settings.chat_daily_limit
+    limit = _param_int("param.chat_daily_limit", settings.chat_daily_limit)
     if limit <= 0:
         return
     try:
@@ -161,5 +162,5 @@ async def ai_match_config():
         "deepseek_model": settings.deepseek_model,
         "fallback_to_local": True,
         "chat_enabled": True,   # 多轮 AI 助手是否可用
-        "chat_daily_limit": settings.chat_daily_limit,  # 每会员每日对话条数（悬浮球展示余量用）
+        "chat_daily_limit": _param_int("param.chat_daily_limit", settings.chat_daily_limit),
     }, message="ok")

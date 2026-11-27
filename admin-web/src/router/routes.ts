@@ -108,6 +108,12 @@ export const constantRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/setting/notice-type.vue'),
         meta: { title: '公告类型', icon: 'Setting' },
       },
+      {
+        path: 'ai/setting',
+        name: 'AISetting',
+        component: () => import('@/views/ai/setting.vue'),
+        meta: { title: 'AI 设置', icon: 'MagicStick' },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/dashboard', meta: { hidden: true } },

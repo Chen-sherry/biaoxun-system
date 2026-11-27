@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.config import settings
 from app.services.llm import achat, achat_stream, LLMError
 from app.services.ai_search import ai_search, _ft_columns, build_ft_query
+from app.services import ai_setting_service as svc
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +353,7 @@ async def ai_chat(
     intent = classify_intent(last_user)
 
     # ③ 系统提示词 + （可选）标讯上下文
-    system = CHAT_SYSTEM_PROMPT
+    system = svc.get_prompt("prompt.chat_system", CHAT_SYSTEM_PROMPT)
     if inject_context and _should_inject_context(intent, history):
         system += "\n\n" + _get_context_snippet()
     llm_messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
@@ -362,6 +363,10 @@ async def ai_chat(
     tool_calls_log: List[str] = []
     reply: Optional[str] = None
     deadline = time.time() + TOTAL_DEADLINE_S
+    model_cfg = svc.get_model("chat_system")
+    max_tokens = svc.get_param_int("param.llm_max_tokens", MAX_TOKENS)
+    temperature = svc.get_param_float("param.llm_temperature", 0.0)
+    timeout_sec = svc.get_param_float("param.llm_timeout_s", 60.0)
 
     try:
         for round_i in range(TOOL_ROUNDS + 1):
@@ -372,9 +377,13 @@ async def ai_chat(
             resp = await achat(
                 llm_messages,
                 tools=TOOLS if use_tools else None,
-                max_tokens=MAX_TOKENS,
-                timeout=max(5.0, min(45.0, remaining)),
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=max(5.0, min(timeout_sec, remaining)),
                 tag="chat",
+                model_override=model_cfg.get("model"),
+                base_url_override=model_cfg.get("base_url"),
+                api_key_override=model_cfg.get("api_key"),
             )
             tool_calls = resp.tool_calls or []
             if not tool_calls:
@@ -505,7 +514,7 @@ async def ai_chat_stream(
     intent = classify_intent(last_user)
 
     # ③ system + （可选）上下文
-    system = CHAT_SYSTEM_PROMPT
+    system = svc.get_prompt("prompt.chat_system", CHAT_SYSTEM_PROMPT)
     if inject_context and _should_inject_context(intent, history):
         # 包 to_thread 让同步 DB 查询不阻塞事件循环（含 TTL 缓存）
         ctx = await asyncio.to_thread(_get_context_snippet)
@@ -518,6 +527,10 @@ async def ai_chat_stream(
     results_acc: List[Dict[str, Any]] = []
     tool_calls_log: List[str] = []
     deadline = time.time() + TOTAL_DEADLINE_S
+    model_cfg = svc.get_model("chat_system")
+    max_tokens = svc.get_param_int("param.llm_max_tokens", MAX_TOKENS)
+    temperature = svc.get_param_float("param.llm_temperature", 0.0)
+    timeout_sec = svc.get_param_float("param.llm_timeout_s", 60.0)
 
     yield {"type": "status", "text": "AI 思考中…"}
 
@@ -534,9 +547,13 @@ async def ai_chat_stream(
             async for kind, payload in achat_stream(
                 llm_messages,
                 tools=TOOLS if use_tools else None,
-                max_tokens=MAX_TOKENS,
-                timeout=max(5.0, min(45.0, remaining)),
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=max(5.0, min(timeout_sec, remaining)),
                 tag="chat",
+                model_override=model_cfg.get("model"),
+                base_url_override=model_cfg.get("base_url"),
+                api_key_override=model_cfg.get("api_key"),
             ):
                 if kind == "error":
                     yield {"type": "error", "message": str(payload)}

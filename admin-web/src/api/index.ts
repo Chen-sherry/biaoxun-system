@@ -166,3 +166,29 @@ export function pushAllSubscribes() {
 export function adminUpdateSubscribe(id: number, data: Record<string, any>) {
   return request.put(`/api/v1/subscribes/${id}/admin`, data)
 }
+
+// ===== AI 设置板块（后台 admin/ops） =====
+export function fetchAISettings() {
+  return request.get('/api/v1/admin/ai/settings')
+}
+export function saveAISetting(key: string, data: { value?: string; remark?: string }) {
+  return request.put(`/api/v1/admin/ai/settings/${encodeURIComponent(key)}`, data)
+}
+export function fetchAISnapshots(key: string) {
+  return request.get(`/api/v1/admin/ai/settings/${encodeURIComponent(key)}/snapshots`)
+}
+export function rollbackAISetting(key: string, snapshotId: number) {
+  return request.post(`/api/v1/admin/ai/settings/${encodeURIComponent(key)}/rollback`,
+                     { snapshot_id: snapshotId })
+}
+export function testAIConnection(payload: {
+  provider?: string; base_url: string; api_key: string; model: string;
+  temperature?: number; timeout?: number;
+}) {
+  return request.post('/api/v1/admin/ai/settings/test-connection', payload,
+    { timeout: 30000 })
+}
+export function tryAIPrompt(payload: { setting_key: string; input_text: string }) {
+  return request.post('/api/v1/admin/ai/settings/prompt/try', payload,
+    { timeout: 60000 })
+}

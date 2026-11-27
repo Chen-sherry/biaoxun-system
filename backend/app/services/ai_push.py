@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from app.config import settings
+from app.services import ai_setting_service as svc
 from app.database import SessionLocal
 from app.models.bid import BidInfo
 
@@ -130,17 +131,23 @@ async def generate_push(messages: List[dict]) -> dict:
             "cited_bid_ids": [], "candidates": [], "searched": 0, "full": False,
         }
 
-    final_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages[-16:]
+    final_messages = [{"role": "system",
+                       "content": svc.get_prompt("prompt.push_generate", SYSTEM_PROMPT)}] + messages[-16:]
 
     candidates: list = []   # 本次会话检索到的标讯 id（按出现顺序去重）
     searched = 0
+
+    model_cfg = svc.get_model("push_generate")
 
     try:
         from app.services.llm import achat, LLMError
         # 最多 4 轮工具调用，防止死循环
         for _ in range(4):
             result = await achat(final_messages, tools=TOOLS, temperature=0.5,
-                                 max_tokens=3000, timeout=60.0, tag="push")
+                                 max_tokens=3000, timeout=60.0, tag="push",
+                                 model_override=model_cfg.get("model"),
+                                 base_url_override=model_cfg.get("base_url"),
+                                 api_key_override=model_cfg.get("api_key"))
             msg = {"content": result.content, "tool_calls": result.tool_calls}
 
             tool_calls = msg.get("tool_calls") or []
