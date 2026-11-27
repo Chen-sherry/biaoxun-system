@@ -32,12 +32,12 @@ logger = logging.getLogger(__name__)
 
 HIGH_SCORE = 75        # >= 此分：高度相关
 MID_SCORE = 60         # 60~74：较相关，辅助展示；<60 丢弃
-CANDIDATE_LIMIT = 120  # 召回池上限（DB 粗筛）
-SCORE_CAP = 60         # 默认送 LLM 打分的候选上限（先本地关键词粗排取 Top，控制成本）
+CANDIDATE_LIMIT = 200  # 召回池上限（DB 粗筛）—— 扩大召回范围
+SCORE_CAP = 100        # 默认送 LLM 打分的候选上限 —— 扩大 LLM 打分范围
 MIN_CANDIDATES = 40    # 单层召回不足此数则继续放宽并累积合并（避免首层非空即停导致召回过少）
 FALLBACK_MIN_SCORE = 40  # 兜底展示的分数线：最高分低于此值视为真无关，返回空态而非垃圾
-SCORING_CHUNK = 30     # 每次打分调用的候选批量
-SCORE_WORKERS = 3      # 打分批次并行度
+SCORING_CHUNK = 25     # 每次打分调用的候选批量 —— 减小批次提高并行度
+SCORE_WORKERS = 4      # 打分批次并行度 —— 提高并行度
 
 FT_INDEX_CACHE_S = 300   # FULLTEXT 索引存在性探测缓存
 LIB_DATE_CACHE_S = 600   # 库内日期范围缓存
