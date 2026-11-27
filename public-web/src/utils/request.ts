@@ -38,6 +38,20 @@ request.interceptors.response.use(
     return data
   },
   (err) => {
+    const status = err?.response?.status
+    if (status === 401) {
+      localStorage.removeItem('token')
+      ElMessage.error('登录已过期，请重新登录')
+      // 延迟跳转，让用户看到提示
+      setTimeout(() => {
+        window.location.href = `${import.meta.env.BASE_URL}login`
+      }, 1500)
+      return Promise.reject(err)
+    }
+    if (status === 403) {
+      ElMessage.error('权限不足')
+      return Promise.reject(err)
+    }
     ElMessage.error(err.message || '网络异常')
     return Promise.reject(err)
   },
