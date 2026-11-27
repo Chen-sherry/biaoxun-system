@@ -115,10 +115,13 @@ function onBallDown(e: PointerEvent) {
   el.addEventListener('pointerup', up)
 }
 
-// ---- 面板拖拽（桌面端标题栏；移动端为底部抽屉不拖）----
-const PANEL_W = 380
-const PANEL_H = 560
+// ---- 面板拖拽 + 调整大小（桌面端；移动端为底部抽屉不拖）----
+const PANEL_W = 480
+const PANEL_H = 640
+const PANEL_MIN_W = 360
+const PANEL_MIN_H = 400
 const panelPos = ref({ x: 0, y: 0 })
+const panelSize = ref({ w: PANEL_W, h: PANEL_H })
 const isMobile = ref(window.innerWidth <= 768)
 function defaultPanel() {
   return {
@@ -127,8 +130,9 @@ function defaultPanel() {
   }
 }
 function clampPanel() {
-  panelPos.value.x = Math.min(Math.max(8, panelPos.value.x), window.innerWidth - PANEL_W - 8)
-  panelPos.value.y = Math.min(Math.max(8, panelPos.value.y), window.innerHeight - 280)
+  const w = panelSize.value.w, h = panelSize.value.h
+  panelPos.value.x = Math.min(Math.max(8, panelPos.value.x), window.innerWidth - w - 8)
+  panelPos.value.y = Math.min(Math.max(8, panelPos.value.y), window.innerHeight - h - 8)
 }
 function onHeaderDown(e: PointerEvent) {
   if (isMobile.value) return
@@ -144,14 +148,51 @@ function onHeaderDown(e: PointerEvent) {
   const up = (ev: PointerEvent) => {
     el.removeEventListener('pointermove', move)
     el.removeEventListener('pointerup', up)
-    try { el.releasePointerCapture(ev.pointerId) } catch { /* 忽略 */ }
-    try { localStorage.setItem(PANEL_KEY, JSON.stringify(panelPos.value)) } catch { /* 忽略 */ }
+    try { el.releasePointerCapture(ev.pointerId) } catch { /* 已释放 */ }
+    savePanelState()
   }
   el.addEventListener('pointermove', move)
   el.addEventListener('pointerup', up)
 }
+// 右下角拖拽调整大小
+function onResizeDown(e: PointerEvent) {
+  e.stopPropagation()
+  const el = e.currentTarget as HTMLElement
+  el.setPointerCapture(e.pointerId)
+  const sx = e.clientX, sy = e.clientY
+  const ow = panelSize.value.w, oh = panelSize.value.h
+  const move = (ev: PointerEvent) => {
+    panelSize.value.w = Math.max(PANEL_MIN_W, ow + (ev.clientX - sx))
+    panelSize.value.h = Math.max(PANEL_MIN_H, oh + (ev.clientY - sy))
+    clampPanel()
+  }
+  const up = (ev: PointerEvent) => {
+    el.removeEventListener('pointermove', move)
+    el.removeEventListener('pointerup', up)
+    try { el.releasePointerCapture(ev.pointerId) } catch { /* 已释放 */ }
+    savePanelState()
+  }
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', up)
+}
+function savePanelState() {
+  try { localStorage.setItem(PANEL_KEY, JSON.stringify({ ...panelPos.value, ...panelSize.value })) } catch { /* 忽略 */ }
+}
 const panelStyle = computed(() =>
-  isMobile.value ? {} : { left: panelPos.value.x + 'px', top: panelPos.value.y + 'px' })
+  isMobile.value ? {} : {
+    left: panelPos.value.x + 'px',
+    top: panelPos.value.y + 'px',
+    width: panelSize.value.w + 'px',
+    height: panelSize.value.h + 'px',
+  })
+
+// ---- 有检索结果时，文本只显示简要引言（卡片承担详情展示）----
+function shortIntro(text: string): string {
+  if (!text) return ''
+  // 取第一段（遇到换行或列表即停），最多 120 字
+  const first = text.split(/\n/)[0] || ''
+  return first.length > 120 ? first.slice(0, 120) + '…' : first
+}
 
 // ---- Markdown 渲染增强 ----
 function escapeHtml(s: string): string {
@@ -534,7 +575,13 @@ onMounted(async () => {
   clampBall()
   try {
     const raw = localStorage.getItem(PANEL_KEY)
-    panelPos.value = raw ? JSON.parse(raw) : defaultPanel()
+    if (raw) {
+      const p = JSON.parse(raw)
+      panelPos.value = { x: p.x ?? 0, y: p.y ?? 0 }
+      if (p.w && p.h) panelSize.value = { w: p.w, h: p.h }
+    } else {
+      panelPos.value = defaultPanel()
+    }
   } catch { panelPos.value = defaultPanel() }
   clampPanel()
   window.addEventListener('resize', onResize)
@@ -594,10 +641,10 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="hd-acts">
-            <button class="hd-btn" title="清空会话" @click.stop="clearMsgs">
+            <button class="hd-btn" title="清空会话" @pointerdown.stop @click="clearMsgs">
               <el-icon><Delete /></el-icon>
             </button>
-            <button class="hd-btn" title="收起" @click.stop="closePanel">
+            <button class="hd-btn" title="收起" @pointerdown.stop @click="closePanel">
               <el-icon><Close /></el-icon>
             </button>
           </div>
@@ -624,7 +671,7 @@ onBeforeUnmount(() => {
               <div
                 class="ai-bubble"
                 :class="[m.role, { 'streaming': m.streaming, 'err': m.error }]"
-                v-html="renderMd(m.content)"
+                v-html="renderMd(m.results?.length ? shortIntro(m.content) : m.content)"
               ></div>
               <span v-if="m.streaming && !m.content" class="ai-stream-ph">AI 思考中…</span>
               <span v-else-if="m.streaming" class="ai-cursor" aria-hidden="true">▍</span>
@@ -698,6 +745,8 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <!-- 右下角调整大小手柄 -->
+        <div v-if="!isMobile" class="aipanel-resize" @pointerdown="onResizeDown" title="拖拽调整大小"></div>
       </div>
     </transition>
   </div>
@@ -733,7 +782,7 @@ onBeforeUnmount(() => {
 
 /* ===== 面板 ===== */
 .aipanel {
-  position: fixed; width: 380px; height: min(560px, calc(100vh - 120px));
+  position: fixed; width: 480px; height: min(640px, calc(100vh - 120px));
   display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -919,6 +968,16 @@ onBeforeUnmount(() => {
 .aipanel-enter-active { transition: opacity 0.22s var(--ease), transform 0.22s var(--ease); }
 .aipanel-leave-active { transition: opacity 0.16s ease, transform 0.16s ease; }
 .aipanel-enter-from, .aipanel-leave-to { opacity: 0; transform: translateY(12px) scale(0.98); }
+
+/* ---- 调整大小手柄 ---- */
+.aipanel-resize {
+  position: absolute; right: 0; bottom: 0;
+  width: 20px; height: 20px; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--line-strong) 50%, var(--line-strong) 55%, transparent 55%, transparent 65%, var(--line-strong) 65%, var(--line-strong) 70%, transparent 70%);
+  opacity: 0.4; transition: opacity 0.2s;
+  z-index: 10;
+}
+.aipanel-resize:hover { opacity: 0.8; }
 
 /* ===== 移动端：底部抽屉 ===== */
 @media (max-width: 768px) {
