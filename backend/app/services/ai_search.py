@@ -77,6 +77,31 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+# 口语化区域 → 覆盖城市（确定性展开，不依赖 LLM 是否听话；DB Prompt 可另补充）
+REGION_ALIAS = {
+    "粤北": ["韶关", "清远", "云浮"],
+    "珠三角": ["广州", "深圳", "佛山", "东莞", "中山", "珠海", "惠州", "江门", "肇庆"],
+    "粤东": ["汕头", "潮州", "揭阳", "汕尾"],
+    "粤西": ["湛江", "茂名", "阳江"],
+    "长三角": ["上海", "南京", "杭州", "苏州", "无锡", "宁波"],
+    "京津冀": ["北京", "天津", "石家庄"],
+    "东北": ["沈阳", "大连", "长春", "哈尔滨"],
+}
+
+
+def _expand_region_aliases(query: str, cond: Dict[str, Any]) -> Dict[str, Any]:
+    """用户话里出现口语区域词时，把覆盖城市并入 synonyms 参与召回。"""
+    blob = (query or "") + " " + " ".join(cond.get("keywords") or [])
+    syn = list(cond.get("synonyms") or [])
+    for alias, cities in REGION_ALIAS.items():
+        if alias in blob:
+            for c in cities:
+                if c not in syn:
+                    syn.append(c)
+    cond["synonyms"] = syn[:12]
+    return cond
+
+
 def _fallback_keywords(query: str) -> List[str]:
     """LLM 不可用时的粗暴分词：按标点/空白拆 + 提取 2 字以上片段。"""
     parts = re.split(r"[,，、。.\s]+", query)
@@ -93,7 +118,7 @@ def _default_cond(query: str) -> Dict[str, Any]:
 
 def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
     """大白话 → 结构化条件。返回 (条件, LLM 是否成功)。失败降级为纯关键词。"""
-    default = _default_cond(query)
+    default = _expand_region_aliases(query, _default_cond(query))
     model_cfg = svc.get_model("search")
     if not (model_cfg.get("api_key") or settings.deepseek_api_key):
         return default, False
@@ -123,7 +148,7 @@ def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
             if isinstance(syn, list) else []
         for k in default:
             data.setdefault(k, default[k])
-        return data, True
+        return _expand_region_aliases(query, data), True
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[ai_search] 转译失败，降级关键词: {e}")
         return default, False
