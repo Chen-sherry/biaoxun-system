@@ -121,14 +121,24 @@ NOTICE_TYPE_FALLBACK = "其他"
 
 
 def _load_notice_type_map(conn) -> dict:
-    """dict_notice_type 的 name -> id 映射，按连接缓存（避免逐条查库）"""
+    """dict_notice_type 的 name -> id 映射，按连接缓存（避免逐条查库）
+
+    兼容 pymysql 普通 Cursor（tuple 输出）和 DictCursor（dict-like 输出）。
+    """
     cached = getattr(conn, "_notice_type_map", None)
     if isinstance(cached, dict) and cached:
         return cached
     cur = conn.cursor()
     try:
         cur.execute("SELECT id, name FROM dict_notice_type")
-        type_map = {name: nid for nid, name in cur.fetchall()}
+        rows = cur.fetchall()
+        type_map = {}
+        for row in rows:
+            if hasattr(row, "keys") and "id" in row:
+                nid, name = row["id"], row["name"]
+            else:
+                nid, name = row[0], row[1]
+            type_map[name] = nid
     finally:
         cur.close()
     try:
@@ -243,17 +253,31 @@ INDUSTRY_FALLBACK = "其他行业"
 
 # 基于 dict_industry 现有数据，先查有哪些行业
 def load_industries(conn) -> list[tuple[int, str, list[str]]]:
-    """返回 [(id, name, 关键词列表), ...]"""
+    """返回 [(id, name, 关键词列表), ...]
+
+    兼容普通 Cursor（tuple）和 DictCursor（dict）。
+    """
+    def _norm(row, ncols=3):
+        if hasattr(row, "keys") and "id" in row:
+            if ncols >= 3 and "keywords" in row:
+                return row["id"], row["name"], row.get("keywords")
+            return row["id"], row["name"], None
+        return row
+
     cur = conn.cursor()
-    # dict_industry 可能没有 keywords 列（老库），退化为用 name 匹配
     try:
         cur.execute("SELECT id, name, keywords FROM dict_industry WHERE status=1")
         rows = cur.fetchall()
-        return [(r[0], r[1], (r[2] or "").split(",") if r[2] else [r[1]]) for r in rows]
+        out = []
+        for r in rows:
+            rid, name, kw = _norm(r, 3)
+            out.append((rid, name, (kw or "").split(",") if kw else [name]))
+        return out
     except Exception:
         conn.rollback()
         cur.execute("SELECT id, name FROM dict_industry WHERE status=1")
-        return [(r[0], r[1], [r[1]]) for r in cur.fetchall()]
+        return [(_norm(r, 2)[0], _norm(r, 2)[1], [_norm(r, 2)[1]])
+                for r in cur.fetchall()]
     finally:
         cur.close()
 
@@ -537,10 +561,16 @@ _BUDGET_NEG = ("中标", "成交", "结算", "决算",
 _WINNER_UNIT_RES = [
     re.compile(r"(?:中标|成交|中选)(?:人|供应商|单位)\s*(?:名\s*称|全称)?"
                r"\s*[：:]\s*([^\s：:，,；;。]{2,60})"),
+    # v2（2026-11-27）：成交/挂牌场景（竞得单位/受让单位/竞买人/成交方）
+    re.compile(r"(?:竞得|受让)(?:人|单位|方)\s*(?:名\s*称|全称)?\s*[：:]\s*([^\s：:，,；;。]{2,60})"),
+    re.compile(r"(?:受让|竞得)单位\s+([^\s，,；;]{2,60}(?:有限公司|集团|厂|公司|中心))"),
 ]
 _WINNER_AMOUNT_RES = [
     # 「中标价（费率或单价等）：250.4306万元」括号说明可跳过
     re.compile(r"(?:中标|成交|中选)(?:价|金额|报价)\s*(?:[（(][^）)]*[）)])?"
+               r"\s*[：:为约]?\s*([\d,]+(?:\.\d+)?)\s*(亿元|万元|元)"),
+    # v2（2026-11-27）：土地挂牌等场景（成交价/出让价/竞得价）
+    re.compile(r"(?:成交|出让|竞得)(?:价|金额)\s*[（(][^）)]*[）)]?"
                r"\s*[：:为约]?\s*([\d,]+(?:\.\d+)?)\s*(亿元|万元|元)"),
 ]
 _WINNER_UNIT_BAD = ("未开标", "详见", "无", "待定", "废标", "流标", "否决")

@@ -54,25 +54,27 @@ async function load() {
     const data: any = await fetchAISettings()
     const flat: any[] = data?.flat || []
     for (const row of flat) {
+      // admin API 返回字段名是 row.key，不是 row.setting_key
+      const k = row.key ?? row.setting_key
       if (row.idx_set === 'model') {
         try {
           const j = JSON.parse(row.value || '{}')
-          scenes.value[row.setting_key] = {
+          scenes.value[k] = {
             provider: j.provider || 'deepseek',
             base_url: j.base_url || '',
             api_key: j.api_key || '',
             model: j.model || '',
           }
         } catch {
-          scenes.value[row.setting_key] = { provider: 'deepseek', base_url: '', api_key: '', model: '' }
+          scenes.value[k] = { provider: 'deepseek', base_url: '', api_key: '', model: '' }
         }
       } else if (row.idx_set === 'prompt') {
-        prompts.value[row.setting_key] = row.value || ''
+        prompts.value[k] = row.value || ''
       } else if (row.idx_set === 'param') {
-        params.value[row.setting_key] = row.value || ''
+        params.value[k] = row.value || ''
       }
     }
-    // 确保所有 scene 都有初始值
+    // 确保所有 scene 都有初始值（DB 没配置的兜底）
     for (const s of SCENES) {
       if (!scenes.value[s.key]) {
         scenes.value[s.key] = { provider: 'deepseek', base_url: 'https://api.deepseek.com/v1', api_key: '', model: 'deepseek-chat' }
