@@ -211,6 +211,13 @@ onMounted(load)
             <el-form-item label="API Key">
               <el-input v-model="scenes[s.key].api_key" type="password" show-password
                 placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx" style="width: 420px" />
+              <div v-if="!scenes[s.key].api_key" class="warn-hint">
+                🔴 当前页面未配置 → 系统自动走服务器 <code>backend/.env</code> 里的默认 <code>DEEPSEEK_API_KEY</code>（正在生效，余额在扣）。
+                在这里填新 key 并保存 → 覆盖旧 key，立即生效。
+              </div>
+              <div v-else class="ok-hint">
+                ✅ 已在本页面配置，保存后会覆盖服务器 .env 默认值
+              </div>
             </el-form-item>
 
             <el-form-item label="模型名">
@@ -343,6 +350,19 @@ onMounted(load)
 }
 .form-hint {
   margin-left: 10px; font-size: 12px; color: var(--el-text-color-secondary);
+}
+.warn-hint {
+  margin-top: 6px; font-size: 12px; color: #991b1b;
+  padding: 8px 12px; background: #fef2f2; border-radius: 6px; border-left: 3px solid #dc2626;
+  line-height: 1.5;
+}
+.warn-hint code {
+  background: #fee2e2; padding: 1px 5px; border-radius: 3px; font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+}
+.ok-hint {
+  margin-top: 6px; font-size: 12px; color: #065f46;
+  padding: 6px 10px; background: #ecfdf5; border-radius: 6px; border-left: 3px solid #059669;
 }
 
 /* ===== 全局参数 ===== */

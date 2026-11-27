@@ -121,19 +121,21 @@ def invalidate(key: Optional[str] = None) -> None:
 
 def get_model(scene: str = "chat_system") -> Dict[str, str]:
     """获取某个业务场景当前要使用的模型配置（dict：provider/base_url/api_key/model）。
-    优先从 DB 读 model.<scene>；未配或缺 api_key 则回退 model.chat_system；
-    仍无则回退 config.py 默认值（空 api_key + 默认 deepseek-chat）。
+    优先从 DB 读 model.<scene>；DB 行的 api_key 为空视为"未配置"，强制回退。
+    最终兜底 config.py 默认值。
     """
     if scene == "chat_system":
         key = "model.chat_system"
     else:
         key = f"model.{scene}"
     cfg = get(key)
-    if not cfg or not isinstance(cfg, dict) or not cfg.get("api_key"):
+    # DB 行的 api_key 为空字符串 / None → 当没配处理
+    if not cfg or not isinstance(cfg, dict) or not (cfg.get("api_key") or "").strip():
         # 回退到 chat_system
         if key != "model.chat_system":
             cfg = get("model.chat_system")
-    if not cfg or not isinstance(cfg, dict):
+    if not cfg or not isinstance(cfg, dict) or not (cfg.get("api_key") or "").strip():
+        # 最终兜底 config.py
         cfg = _DEFAULTS["model.chat_system"]
     return cfg
 

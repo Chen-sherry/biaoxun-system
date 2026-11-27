@@ -47,8 +47,14 @@ _FIELD_DESC = {
 }
 
 # 结果类标签：正文里出现这些才认为有结果字段可提
-_RESULT_LABEL_RE = re.compile(
-    r"(中标|成交|中选)(人|供应商|单位)[：:]|中标结果|成交结果")
+# v3（2026-11-27）：候选人场景单独分支——正文含「中标候选人/成交候选人」
+# 就触发 winner_unit/win_amount 缺失检查（取第一候选人为预中标人）。
+# 最终中标公告（有冒号：中标人：XXX）走第一条分支。
+_FINAL_WINNER_RE = re.compile(
+    r"(中标|成交|中选)(人|供应商|单位)[：:]|"
+    r"中标结果|成交结果")
+# 候选人公示：无冒号，只判断是否出现关键词
+_CANDIDATE_RE = re.compile(r"中标候选人|成交候选人|评标公示|评审结果公示")
 
 # winner_unit 脏值（提取到这些视为无效）
 _WINNER_BAD = {"未开标", "详见", "/", "-", "—", "无", "待定", "废标"}
@@ -75,7 +81,8 @@ def missing_fields(mapped: Dict) -> List[str]:
     # 过短的采购人是规则误抓的通用词（如「要求」——正文「采购人要求」被当值），转 AI 纠正
     if not t or len(t) < 4:
         miss.append("tenderee")
-    if _RESULT_LABEL_RE.search(ct[:1500]):
+    if (_FINAL_WINNER_RE.search(ct[:1500])
+            or _CANDIDATE_RE.search(ct[:1500])):
         wu = (mapped.get("winner_unit") or "").strip()
         if not wu or wu in _WINNER_BAD:
             miss.append("winner_unit")
@@ -90,8 +97,10 @@ def _build_user_prompt(title: str, text: str, missing: List[str],
     example: Dict = {k: None for k in missing}
     lines = [
         f"从下面的招标/采购公告正文中提取这些字段：{desc}。",
-        "规则：正文中确实没有就填 null，不要编造；金额换算成元（数字）；"
-        "单位名称用全称。",
+        "规则：",
+        "1. 正文中确实没有就填 null，不要编造；金额换算成元（纯数字）；单位名称用全称。",
+        "2. 如果是中标/成交候选人公示，取「第一中标(成交)候选人」作为中标人、取其对应报价为成交金额。",
+        "3. 费率采购、代理服务费不是成交金额，公告没有总价就填 null。",
     ]
     # 分类搭车（方案 A）：只在本次调用已触发时顺带问，不新增调用
     opts = class_options or {}
