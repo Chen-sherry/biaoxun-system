@@ -37,11 +37,14 @@ def _topic_ok(item: dict, keywords) -> bool:
     return any(k in blob for k in keywords)
 
 
-def _region_ok(item: dict, regions) -> bool:
-    if not regions:
+def _region_ok(item: dict, prefixes) -> bool:
+    """地区是否命中：有 region_prefixes 时用候选 region_code 前缀判定，否则视为不限地区。"""
+    if not prefixes:
         return True
-    rn = item.get("region_name") or ""
-    return any(r in rn for r in regions)
+    code = str(item.get("region_code") or "").strip()
+    if not code:
+        return False  # 有地区约束但候选无码 → 无法确认，算未命中
+    return any(code.startswith(p) for p in prefixes)
 
 
 def run(top_k: int = 10, save: str | None = None) -> None:
@@ -76,7 +79,7 @@ def run(top_k: int = 10, save: str | None = None) -> None:
         leak = 0
         for i in items:
             t_ok = _topic_ok(i, c.get("topic_keywords"))
-            r_ok = _region_ok(i, c.get("region_keywords"))
+            r_ok = _region_ok(i, c.get("region_prefixes"))
             if t_ok and r_ok:
                 match += 1
             elif t_ok and not r_ok:
