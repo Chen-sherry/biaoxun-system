@@ -168,7 +168,7 @@
 import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { MagicStick, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock, PieChart, MapLocation } from '@element-plus/icons-vue'
-import axios from 'axios'
+import request from '@/utils/request'
 import heroArt from '@/assets/brand/hero-illustration.svg'
 import { fetchPublicHot, fetchPortalStats, fetchPublicNoticeTypes } from '@/api'
 
@@ -258,8 +258,8 @@ onMounted(async () => {
   try {
     const [hot, s, nts, typeData, regionData] = await Promise.all([
       fetchPublicHot(16), fetchPortalStats(), fetchPublicNoticeTypes(),
-      axios.get('/api/v1/stats/today-by-type').then(r => r.data.data || []),
-      axios.get('/api/v1/stats/region-top10').then(r => r.data.data || []),
+      request.get('/api/v1/stats/today-by-type').then(r => r || []),
+      request.get('/api/v1/stats/region-top10').then(r => r || []),
     ])
     hotBids.value = hot
     Object.assign(stats, s)

@@ -596,12 +596,12 @@ def score_candidates(query: str, candidates: List[Dict[str, Any]],
         return [], {"batch_failures": 0, "llm_score_ok": False}
     model_cfg = svc.get_model("search")
     if not (model_cfg.get("api_key") or settings.deepseek_api_key):
-        return _local_score(query, candidates), {"batch_failures": 0, "llm_score_ok": False}
+        return _local_score(query, candidates, cond), {"batch_failures": 0, "llm_score_ok": False}
 
     cap = score_cap or SCORE_CAP
     if len(candidates) > cap:
-        # 本地关键词粗排，只把最相关的一批送 LLM（召回池仍是 120，不打折召回）
-        candidates = _local_score(query, candidates)[:cap]
+        # 本地关键词粗排，只把最相关的一批送 LLM（使用转译后的 keywords + synonyms）
+        candidates = _local_score(query, candidates, cond)[:cap]
 
     date_note = ""
     if date_relaxed:
@@ -623,7 +623,7 @@ def score_candidates(query: str, candidates: List[Dict[str, Any]],
             except Exception as e:  # noqa: BLE001
                 batch_failures += 1
                 logger.warning(f"[ai_search] 打分批次 {i + 1}/{len(batches)} 失败，本地降级: {e}")
-                batch_results[i] = _local_score(query, batches[i])
+                batch_results[i] = _local_score(query, batches[i], cond)
 
     results: List[Dict[str, Any]] = []
     for br in batch_results:
@@ -632,15 +632,28 @@ def score_candidates(query: str, candidates: List[Dict[str, Any]],
     return results, {"batch_failures": batch_failures, "llm_score_ok": batch_failures == 0}
 
 
-def _local_score(query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """降级：本地关键词加权打分（与 deepseek_match 的降级逻辑一致）。"""
-    kws = _fallback_keywords(query)
+def _local_score(query: str, candidates: List[Dict[str, Any]],
+                 cond: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """降级/粗排：本地关键词加权打分。
+    优先使用 LLM 转译后的 keywords + synonyms，失败时用原始 query 分词。"""
+    # 优先用转译后的关键词
+    if cond:
+        kws = list(cond.get("keywords") or []) + list(cond.get("synonyms") or [])
+    else:
+        kws = _fallback_keywords(query)
+    kws = [k for k in kws if len(k) >= 2][:12]  # 去空、限长
+
     out = []
     for c in candidates:
-        text_blob = (c["title"] or "") + (c.get("snippet") or "")
-        hits = sum(1 for k in kws if k.lower() in text_blob.lower())
-        score = int(hits / len(kws) * 90) if kws else 0
-        out.append({**c, "score": score, "reason": "本地关键词匹配（AI 服务不可用）"})
+        text_blob = (c["title"] or "") + " " + (c.get("snippet") or "")
+        text_lower = text_blob.lower()
+        # 标题命中权重更高
+        title_lower = (c.get("title") or "").lower()
+        hits = sum(2 for k in kws if k.lower() in title_lower)
+        hits += sum(1 for k in kws if k.lower() in text_lower and k.lower() not in title_lower)
+        max_hits = len(kws) * 3  # 标题命中满分
+        score = int(hits / max_hits * 90) if max_hits else 0
+        out.append({**c, "score": score, "reason": "本地关键词匹配"})
     return sorted(out, key=lambda x: x["score"], reverse=True)
 
 
