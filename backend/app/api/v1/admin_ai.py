@@ -225,9 +225,9 @@ async def prompt_try(payload: PromptTryIn, _: SysUser = AdminRole):
 
 usage_router = APIRouter(prefix="/admin/ai", tags=["后台：AI 用量"])
 
-# DeepSeek 计费估算（元 / 百万 token）。仅用于后台展示，不影响实际计费。
-PRICE_INPUT_PER_M = 2.0
-PRICE_OUTPUT_PER_M = 3.0
+# Qwen-turbo 计费估算（元 / 百万 token）。仅用于后台展示，不影响实际计费。
+PRICE_INPUT_PER_M = 0.3
+PRICE_OUTPUT_PER_M = 0.6
 
 
 def _agg(db, start, end=None):

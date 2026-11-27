@@ -84,7 +84,7 @@
           </div>
 
           <div class="usage-foot">
-            按 DeepSeek 价目估算：输入 ¥{{ pricing.input_per_m }}/M · 输出 ¥{{ pricing.output_per_m }}/M，仅统计接通统一 LLM 层的调用
+            估算值（按 Qwen 价目）：输入 ¥{{ pricing.input_per_m }}/M · 输出 ¥{{ pricing.output_per_m }}/M，仅统计接通统一 LLM 层的调用
           </div>
         </div>
       </el-col>
@@ -129,7 +129,7 @@ const TAG_LABELS: Record<string, string> = {
   admin_prompt_try: '后台试运行',
 }
 
-const pricing = computed(() => usage.value?.pricing || { input_per_m: 2, output_per_m: 3 })
+const pricing = computed(() => usage.value?.pricing || { input_per_m: 0.3, output_per_m: 0.6 })
 
 const usagePeriods = computed(() => {
   const s = usage.value?.summary || {}
