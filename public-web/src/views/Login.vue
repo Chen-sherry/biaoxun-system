@@ -41,14 +41,15 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { reactive, ref, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { login, register } from '@/api'
 
 const router = useRouter()
+const route = useRoute()
 const tab = ref<'login' | 'register'>('login')
 const loading = ref(false)
 const loginRef = ref<FormInstance>()
@@ -60,6 +61,12 @@ const rules: FormRules = {
   password: [{ required: true, min: 6, message: '密码至少 6 位', trigger: 'blur' }],
 }
 
+onMounted(() => {
+  // 会员弹窗跳转过来时，保存了 pending_chat_input → 回登录页后会自动恢复
+  const pending = sessionStorage.getItem('biaoxun_pending_chat')
+  if (pending) loginForm.username = ''  // 仅提示有挂起的输入，不在登录页显示
+})
+
 async function onLogin() {
   await loginRef.value?.validate()
   loading.value = true
@@ -67,7 +74,14 @@ async function onLogin() {
     const data: any = await login(loginForm)
     localStorage.setItem('token', data.access_token)
     ElMessage.success('登录成功')
-    router.push('/')
+
+    // 带 redirect 回原页；redirect 里可能还带 query（如 ?kw=xxx）
+    const rd = route.query.redirect as string | undefined
+    if (rd && rd !== '/login') {
+      router.push(rd)
+    } else {
+      router.push('/')
+    }
   } finally { loading.value = false }
 }
 async function onRegister() {

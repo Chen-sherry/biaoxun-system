@@ -31,14 +31,13 @@ function setDraft(key: string, v: any, field: 'value' | 'remark' = 'value') {
 async function load() {
   loading.value = true
   try {
-    const res = await fetchAISettings()
-    if (res?.code === 0) {
-      const g = res.data?.groups || { model: [], prompt: [], param: [] }
-      groups.value = g
-      initDraft(res.data?.flat || [])
-    } else {
-      ElMessage.error(res?.msg || '加载失败')
-    }
+    const data: any = await fetchAISettings()
+    // request 拦截器已解包（return data.data），直接用
+    const g = data?.groups || { model: [], prompt: [], param: [] }
+    groups.value = g
+    initDraft(data?.flat || [])
+  } catch (e: any) {
+    ElMessage.error(e?.message || '加载失败')
   } finally { loading.value = false }
 }
 
@@ -47,12 +46,8 @@ async function saveOne(key: string) {
   const d = drafts.value[key]
   if (d === undefined) return
   try {
-    const res = await saveAISetting(key, { value: d.value ?? '', remark: d.remark })
-    if (res?.code === 0) {
-      ElMessage.success('已保存（60s 热更缓存，立即生效）')
-    } else {
-      ElMessage.error(res?.msg || '保存失败')
-    }
+    await saveAISetting(key, { value: d.value ?? '', remark: d.remark })
+    ElMessage.success('已保存（60s 热更缓存，立即生效）')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '保存失败')
   }
@@ -118,17 +113,13 @@ async function tryPrompt() {
   promptTrying.value = true
   promptResult.value = null
   try {
-    const res = await tryAIPrompt({
+    const data: any = await tryAIPrompt({
       setting_key: promptKey.value,
       input_text: promptInput.value,
     })
-    if (res?.code === 0) {
-      promptResult.value = res.data
-    } else {
-      promptResult.value = { error: true, message: res?.msg }
-    }
+    promptResult.value = data
   } catch (e: any) {
-    promptResult.value = { error: true, message: e?.response?.data?.detail || String(e) }
+    promptResult.value = { error: true, message: e?.message || '试运行失败' }
   } finally { promptTrying.value = false }
 }
 
@@ -145,9 +136,10 @@ const snapLoading = ref(false)
 async function loadSnaps() {
   snapLoading.value = true
   try {
-    const res = await fetchAISnapshots(snapKey.value)
-    if (res?.code === 0) snapshots.value = res.data || []
-    else ElMessage.error(res?.msg || '加载失败')
+    const data: any = await fetchAISnapshots(snapKey.value)
+    snapshots.value = data || []
+  } catch (e: any) {
+    ElMessage.error(e?.message || '加载失败')
   } finally { snapLoading.value = false }
 }
 

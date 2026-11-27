@@ -279,7 +279,14 @@ watch(() => [msgs.value.length,
 watch(open, (v) => { if (v) scrollBottom() })
 
 // ---- 会员提示 ----
-async function memberGate() {
+async function memberGate(pendingInput?: string) {
+  // 保存当前状态：打开的面板 + 输入框内容，登录后恢复
+  const redirect = encodeURIComponent(route.fullPath)
+  if (open.value && pendingInput) {
+    sessionStorage.setItem('biaoxun_pending_chat', JSON.stringify({
+      open: true, input: pendingInput, at: Date.now(),
+    }))
+  }
   try {
     await ElMessageBox.alert(
       'AI 助手是付费会员专属功能，开通会员后即可使用。',
@@ -293,9 +300,9 @@ async function memberGate() {
         center: true,
       },
     )
-    router.push('/member')
+    router.push(`/member?redirect=${redirect}`)
   } catch (action) {
-    if (action === 'cancel') router.push('/login')
+    if (action === 'cancel') router.push(`/login?redirect=${redirect}`)
   }
 }
 
@@ -396,7 +403,9 @@ async function send(preset?: string, retryOf?: Msg) {
           }
         }
         saveMsgs()
-        await memberGate()
+        // 传当前发送的那条内容，让登录回来后能自动恢复
+        const pending = preset ?? input.value ?? ''
+        await memberGate(pending)
         return
       }
       if (status === 429) {
@@ -536,6 +545,20 @@ onMounted(async () => {
     const d = await res.json()
     if (d?.code === 0) chatEnabled.value = !!d.data?.chat_enabled
   } catch { /* 保持可用 */ }
+
+  // 登录回来：恢复登录前挂起的输入（memberGate 存在 sessionStorage）
+  try {
+    const raw = sessionStorage.getItem('biaoxun_pending_chat')
+    if (raw) {
+      const p = JSON.parse(raw)
+      if (p?.open) {
+        open.value = true
+        if (p.input) input.value = p.input
+        ElMessage.info('已恢复登录前的输入，可继续发送')
+      }
+      sessionStorage.removeItem('biaoxun_pending_chat')
+    }
+  } catch { /* 忽略 */ }
 })
 
 onBeforeUnmount(() => {

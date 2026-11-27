@@ -162,6 +162,10 @@ async function doAiSearch() {
     const status = e?.response?.status
     if (status === 401 || status === 403) {
       try {
+        // 保存搜索词 + 当前路由到 sessionStorage，登录回来 AIMatch.onMounted 会自动重新检索
+        const q = (query.value || '').trim()
+        const rd = encodeURIComponent(route.fullPath)
+        if (q) sessionStorage.setItem('biaoxun_pending_search', q)
         await ElMessageBox.alert(
           'AI 检索是付费会员专属功能，开通会员后即可使用。\n（当前为演示环境，会员开通功能即将上线）',
           '会员专享',
@@ -174,10 +178,13 @@ async function doAiSearch() {
             center: true,
           },
         )
-        router.push('/member')
+        router.push(`/member?redirect=${rd}`)
       } catch (action) {
         // 「登录」按钮 = cancel；右上角 X = close（不跳转）
-        if (action === 'cancel') router.push('/login')
+        if (action === 'cancel') {
+          const rd = encodeURIComponent(route.fullPath)
+          router.push(`/login?redirect=${rd}`)
+        }
       }
     } else if (status === 400) {
       ElMessage.error('检索内容不能为空')
@@ -191,6 +198,15 @@ async function doAiSearch() {
 
 // 首页 AI 搜索框跳转带 q 参数、顶栏跳转带 kw 参数，任一存在即自动检索
 onMounted(() => {
+  // 登录回来的用户，sessionStorage 里可能有挂起的搜索词
+  const pending = sessionStorage.getItem('biaoxun_pending_search')
+  if (pending) {
+    sessionStorage.removeItem('biaoxun_pending_search')
+    ElMessage.info('已恢复登录前的搜索词')
+    query.value = pending
+    doAiSearch()
+    return
+  }
   const raw = route.query.q ?? route.query.kw
   if (typeof raw === 'string' && raw.trim()) {
     query.value = raw.trim()

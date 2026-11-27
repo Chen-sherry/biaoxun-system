@@ -125,7 +125,8 @@ async def chat_stream(
 
     async def _gen():
         async for event in ai_chat_stream(cleaned, inject_context=req.inject_context):
-            yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+            # default=str 兜底 datetime / date 不可序列化字段（results 里常见）
+            yield f"data: {_json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
     headers = {
         "Cache-Control": "no-cache",
