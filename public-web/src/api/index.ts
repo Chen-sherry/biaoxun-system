@@ -30,3 +30,20 @@ export function register(data: any) {
 export function fetchMe() {
   return request.get('/api/v1/auth/me')
 }
+
+// ============ 会员 ============
+export function fetchMemberPackages() {
+  return request.get('/api/v1/member-packages')
+}
+export function fetchMyMemberStatus() {
+  return request.get('/api/v1/member-orders/my-status')
+}
+export function fetchMyOrders(params?: Record<string, any>) {
+  return request.get('/api/v1/member-orders', { params })
+}
+export function createOrder(data: { package_id: number }) {
+  return request.post('/api/v1/member-orders', data)
+}
+export function payOrder(orderNo: string, payType = 'manual') {
+  return request.post(`/api/v1/member-orders/${orderNo}/pay`, null, { params: { pay_type: payType } })
+}

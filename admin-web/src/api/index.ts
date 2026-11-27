@@ -50,13 +50,27 @@ export function runCrawlSource(sourceId: number) {
   return request.post(`/api/v1/crawl/run/${sourceId}`, null, { timeout: 300000 })
 }
 
-// 会员套餐
-export function fetchPackageList() {
-  return request.get('/api/v1/member-packages')
+// ===== 会员管理（后台） =====
+export function fetchAdminPackageList(params?: Record<string, any>) {
+  return request.get('/api/v1/admin/member/packages', { params })
 }
-
-export function fetchOrderList(params?: Record<string, any>) {
-  return request.get('/api/v1/member-orders', { params })
+export function createPackage(data: Record<string, any>) {
+  return request.post('/api/v1/admin/member/packages', data)
+}
+export function updatePackage(id: number, data: Record<string, any>) {
+  return request.put(`/api/v1/admin/member/packages/${id}`, data)
+}
+export function deletePackage(id: number) {
+  return request.delete(`/api/v1/admin/member/packages/${id}`)
+}
+export function fetchAdminOrderList(params?: Record<string, any>) {
+  return request.get('/api/v1/admin/member/orders', { params })
+}
+export function fetchAdminOrderDetail(orderNo: string) {
+  return request.get(`/api/v1/admin/member/orders/${orderNo}`)
+}
+export function refundOrder(orderNo: string) {
+  return request.post(`/api/v1/admin/member/orders/${orderNo}/refund`)
 }
 
 // 管理后台用户

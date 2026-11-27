@@ -69,7 +69,8 @@ export default { components: { Search, User, ArrowDown } }
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="router.push('/member')">个人中心</el-dropdown-item>
+                <el-dropdown-item @click="router.push('/member')">会员中心</el-dropdown-item>
+                <el-dropdown-item @click="router.push('/member')">我的订单</el-dropdown-item>
                 <el-dropdown-item @click="goLogout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -101,7 +102,7 @@ export default { components: { Search, User, ArrowDown } }
         <div class="mobile-user">
           <template v-if="isLoggedIn">
             <button class="mobile-btn" @click="router.push('/member')">
-              <el-icon><User /></el-icon> 我的（个人中心）
+              <el-icon><User /></el-icon> 会员中心
             </button>
             <button class="mobile-btn" @click="goLogout">退出登录</button>
           </template>

@@ -1,7 +1,7 @@
 """API v1 路由聚合"""
 from fastapi import APIRouter
 
-from app.api.v1 import auth, bid, source, subscribe, member, member_order, dict_data, crawl, admin_user, ai, stats, portal, admin_data_clean, admin_push, admin_ai
+from app.api.v1 import auth, bid, source, subscribe, member, member_order, dict_data, crawl, admin_user, ai, stats, portal, admin_data_clean, admin_push, admin_ai, admin_member
 
 api_v1 = APIRouter(prefix="/api/v1")
 
@@ -21,3 +21,4 @@ api_v1.include_router(admin_data_clean.router, tags=["后台：数据清洗"])
 api_v1.include_router(admin_push.router, tags=["后台：推送管理"])
 api_v1.include_router(admin_ai.router, tags=["后台：AI 设置"])
 api_v1.include_router(admin_ai.usage_router, tags=["后台：AI 用量"])
+api_v1.include_router(admin_member.router, tags=["后台：会员管理"])
