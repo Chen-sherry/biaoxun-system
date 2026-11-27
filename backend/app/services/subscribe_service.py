@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from sqlalchemy import or_
+from sqlalchemy.orm import defer
 
 from app.models.bid import BidInfo
 from app.models.member import MemberOrder, MemberPackage
@@ -78,7 +79,9 @@ def match_bids(db, s: BidSubscribe, days: int = 7, limit: int = 50,
     """按订阅条件匹配标讯：
     keyword 拆词 OR LIKE title；region/industry/notice_type 等值；NULL/空 = 不约束。
     仅取 status=1；ignore_last_push=False 时只取 last_push_at 之后的新标讯。"""
-    q = db.query(BidInfo).filter(BidInfo.status == 1)
+    q = db.query(BidInfo).options(
+        defer(BidInfo.content), defer(BidInfo.content_text)   # 列表/匹配不取大 TEXT
+    ).filter(BidInfo.status == 1)
 
     words = [w for w in (s.keyword or "").replace("，", " ").replace(",", " ").split() if w]
     if words:
