@@ -5,7 +5,6 @@ import { fetchAISettings, saveAISetting, testAIConnection } from '@/api'
 import { Top, Bottom } from '@element-plus/icons-vue'
 
 // ========== Provider 预设 ==========
-// 选 Provider 自动填 base_url；自定义则全手填
 const PROVIDERS = [
   { value: 'deepseek', label: 'DeepSeek (深度求索)', base_url: 'https://api.deepseek.com/v1',
     hint: '推荐：deepseek-chat（通用）/ deepseek-reasoner（推理）' },
@@ -21,10 +20,9 @@ const PROVIDERS = [
 const providerMeta = (p: string) => PROVIDERS.find(x => x.value === p)
 
 // ========== 场景配置 ==========
-// 4 个 model key，每个独立一张卡片
 const SCENES = [
   { key: 'model.chat_system',   name: 'AI 悬浮球 / 对话', icon: '💬', tip: '主模型，负责聊天 + 工具调用' },
-  { key: 'model.search',        name: 'AI 检索',         icon: '🔍', tip: '把大白话转成检索条件 + 结果打分' },
+  { key: 'model.search',        name: 'AI 检索',         icon: '', tip: '把大白话转成检索条件 + 结果打分' },
   { key: 'model.push_generate', name: '推送文案 AI',     icon: '📧', tip: '每天给订阅用户生成推送文案' },
   { key: 'model.extract_ai',    name: '字段补提取 AI',   icon: '📑', tip: '爬虫兜底：补金额/分类/采购人' },
 ]
@@ -47,6 +45,8 @@ const expanded = ref<Record<string, boolean>>({
   'model.push_generate': false,
   'model.extract_ai': false,
 })
+// 每个 scene 的 API Key 是否被用户修改过（从脱敏值变成新值）
+const apiKeyEdited = ref<Record<string, boolean>>({})
 
 async function load() {
   loading.value = true
@@ -54,7 +54,6 @@ async function load() {
     const data: any = await fetchAISettings()
     const flat: any[] = data?.flat || []
     for (const row of flat) {
-      // admin API 返回字段名是 row.key，不是 row.setting_key
       const k = row.key ?? row.setting_key
       if (row.idx_set === 'model') {
         try {
@@ -65,8 +64,11 @@ async function load() {
             api_key: j.api_key || '',
             model: j.model || '',
           }
+          // 初始状态：API Key 未被修改（显示的是脱敏值）
+          apiKeyEdited.value[k] = false
         } catch {
           scenes.value[k] = { provider: 'deepseek', base_url: '', api_key: '', model: '' }
+          apiKeyEdited.value[k] = false
         }
       } else if (row.idx_set === 'prompt') {
         prompts.value[k] = row.value || ''
@@ -74,10 +76,11 @@ async function load() {
         params.value[k] = row.value || ''
       }
     }
-    // 确保所有 scene 都有初始值（DB 没配置的兜底）
+    // 确保所有 scene 都有初始值
     for (const s of SCENES) {
       if (!scenes.value[s.key]) {
         scenes.value[s.key] = { provider: 'deepseek', base_url: 'https://api.deepseek.com/v1', api_key: '', model: 'deepseek-chat' }
+        apiKeyEdited.value[s.key] = false
       }
     }
   } catch (e: any) {
@@ -89,11 +92,19 @@ function toggleExpand(k: string) {
   expanded.value[k] = !expanded.value[k]
 }
 
-// Provider 变更 → 自动填 base_url（custom 除外）
+// Provider 变更 → 自动填 base_url
 function onProviderChange(k: string) {
   const s = scenes.value[k]
   const meta = providerMeta(s.provider)
   if (meta && meta.value !== 'custom') s.base_url = meta.base_url
+}
+
+// API Key 输入框修改 → 标记为已编辑
+function onApiKeyInput(k: string, value: string) {
+  scenes.value[k].api_key = value
+  // 如果从脱敏值（含*）变成非脱敏值，标记为已编辑
+  const oldVal = scenes.value[k].api_key // 这里取的是修改前的值，需要在外层判断
+  apiKeyEdited.value[k] = true
 }
 
 // ========== 保存 ==========
@@ -104,7 +115,6 @@ async function saveScene(k: string) {
     return
   }
   try {
-    // 脱敏值（含 *）或空 → 让后端保留 DB 原值，不传 api_key
     const isRedacted = s.api_key && s.api_key.includes('*')
     const finalKey = (!s.api_key || isRedacted) ? null : s.api_key
     const payload: any = {
@@ -113,6 +123,8 @@ async function saveScene(k: string) {
     if (finalKey !== null) payload.api_key = finalKey
     await saveAISetting(k, { value: JSON.stringify(payload, null, 2) })
     ElMessage.success('已保存（立即生效）')
+    // 保存后，API Key 又被脱敏，重置编辑状态
+    apiKeyEdited.value[k] = false
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '保存失败')
   }
@@ -138,10 +150,23 @@ async function saveParam(k: string) {
 
 // ========== 测试连接 ==========
 const testLoading = ref<Record<string, boolean>>({})
+// 只有当 API Key 被用户修改过（从脱敏值变成新值）才允许测试
+function canTestConnection(k: string): boolean {
+  const s = scenes.value[k]
+  // 必须 API Key 被修改过才允许测试
+  if (!apiKeyEdited.value[k]) return false
+  // 必须填完所有必填项
+  if (!s.base_url || !s.api_key || !s.model) return false
+  return true
+}
 async function testScene(k: string) {
   const s = scenes.value[k]
-  if (!s.base_url || !s.api_key || !s.model) {
-    ElMessage.warning('请先填完 Base URL / API Key / 模型名')
+  if (!canTestConnection(k)) {
+    if (!apiKeyEdited.value[k]) {
+      ElMessage.warning('请先修改 API Key 输入框（从脱敏值改为新 key）')
+    } else {
+      ElMessage.warning('请先填完 Base URL / API Key / 模型名')
+    }
     return
   }
   testLoading.value[k] = true
@@ -150,7 +175,6 @@ async function testScene(k: string) {
       base_url: s.base_url, api_key: s.api_key, model: s.model,
       temperature: 0, timeout: 15,
     })
-    // request 拦截器已解包
     if (res?.ok) ElMessage.success(`✅ 连通！${res.model} · ${res.latency_ms}ms`)
     else ElMessage.error(`❌ ${res?.reason || '连接失败'}`)
   } catch (e: any) {
@@ -213,12 +237,20 @@ onMounted(load)
             </el-form-item>
 
             <el-form-item label="API Key">
-              <el-input v-model="scenes[s.key].api_key" type="password" show-password
+              <el-input 
+                v-model="scenes[s.key].api_key" 
+                type="password" 
+                show-password
                 :placeholder="scenes[s.key].api_key ? '留空 = 保留原 key' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'"
-                style="width: 420px" />
+                style="width: 420px"
+                @input="onApiKeyInput(s.key, ($event.target as HTMLInputElement).value)"
+              />
               <div class="form-hint">
-                <template v-if="scenes[s.key].api_key && scenes[s.key].api_key.includes('*')">
+                <template v-if="scenes[s.key].api_key && scenes[s.key].api_key.includes('*') && !apiKeyEdited[s.key]">
                   🔒 已在后台配置，显示为脱敏值。想换 key → 直接粘贴新 key 点保存；留空 = 不改
+                </template>
+                <template v-else-if="apiKeyEdited[s.key] && scenes[s.key].api_key && !scenes[s.key].api_key.includes('*')">
+                  ✏️ 已修改为新的 API Key，可测试连接或保存
                 </template>
                 <template v-else-if="scenes[s.key].api_key">
                   ⚠️ 当前输入框里是明文 key，保存后会存数据库（建议改完立即保存）
@@ -245,11 +277,18 @@ onMounted(load)
             </el-form-item>
 
             <el-form-item label=" ">
-              <el-button type="primary" :loading="testLoading[s.key]" @click="testScene(s.key)">
+              <el-button type="primary" :loading="testLoading[s.key]" :disabled="!canTestConnection(s.key)" @click="testScene(s.key)">
                 🔌 测试连接
               </el-button>
               <el-button type="success" @click="saveScene(s.key)" style="margin-left:8px">💾 保存</el-button>
-              <span class="form-hint">先测试连通再保存更稳妥</span>
+              <span class="form-hint">
+                <template v-if="apiKeyEdited[s.key]">
+                  已修改 API Key，可测试或保存
+                </template>
+                <template v-else>
+                  修改 API Key 输入框后可测试连接
+                </template>
+              </span>
             </el-form-item>
           </el-form>
         </div>
@@ -372,6 +411,7 @@ onMounted(load)
 .ok-hint {
   margin-top: 6px; font-size: 12px; color: #065f46;
   padding: 6px 10px; background: #ecfdf5; border-radius: 6px; border-left: 3px solid #059669;
+  line-height: 1.5;
 }
 
 /* ===== 全局参数 ===== */
