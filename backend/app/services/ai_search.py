@@ -110,7 +110,9 @@ def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
             timeout=30,
             json_mode=True,
             tag="translate",
-            model_override=model_cfg,
+            model_override=model_cfg.get("model"),
+            base_url_override=model_cfg.get("base_url"),
+            api_key_override=model_cfg.get("api_key"),
         )
         if not isinstance(data.get("keywords"), list) or not data["keywords"]:
             data["keywords"] = default["keywords"]
@@ -530,7 +532,9 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
         max_tokens=6000,
         timeout=60,
         tag="score",
-        model_override=model_cfg,
+        model_override=model_cfg.get("model"),
+        base_url_override=model_cfg.get("base_url"),
+        api_key_override=model_cfg.get("api_key"),
     )
     by_id = {int(s["id"]): s for s in scores
              if isinstance(s, dict) and s.get("id") is not None}
