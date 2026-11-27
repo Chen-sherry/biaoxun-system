@@ -92,59 +92,6 @@
       </div>
     </section>
 
-    <!-- 数据看板：7天趋势 + 热门搜索 -->
-    <section class="dashboard-bar" v-if="trend7d.length || hotSearches.length">
-      <div class="dash-card dash-trend">
-        <div class="dash-head">
-          <span class="dash-kicker">7-DAY TREND</span>
-          <h3><el-icon><TrendCharts /></el-icon> 近 7 天新增趋势</h3>
-        </div>
-        <div class="trend-chart" v-if="trend7d.length">
-          <svg :viewBox="`0 0 ${chartW} ${chartH}`" preserveAspectRatio="none">
-            <!-- 网格线 -->
-            <line v-for="i in 4" :key="'g'+i" :x1="0" :y1="chartH * i / 4" :x2="chartW" :y2="chartH * i / 4" stroke="rgba(148,163,184,0.15)" stroke-dasharray="4,4" />
-            <!-- 面积 -->
-            <path :d="areaPath" fill="url(#trendGrad)" opacity="0.6" />
-            <!-- 折线 -->
-            <path :d="linePath" fill="none" stroke="var(--accent-strong)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-            <!-- 数据点 -->
-            <circle v-for="(p, i) in trendPoints" :key="i" :cx="p.x" :cy="p.y" r="4" fill="var(--accent-strong)" stroke="#fff" stroke-width="2" />
-          </svg>
-          <defs>
-            <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="var(--accent-strong)" stop-opacity="0.4" />
-              <stop offset="100%" stop-color="var(--accent-strong)" stop-opacity="0" />
-            </linearGradient>
-          </defs>
-          <div class="trend-labels">
-            <span v-for="t in trend7d" :key="t.date">{{ t.date }}</span>
-          </div>
-        </div>
-        <div class="trend-empty" v-else>暂无数据</div>
-      </div>
-
-      <div class="dash-card dash-hot">
-        <div class="dash-head">
-          <span class="dash-kicker">HOT SEARCHES</span>
-          <h3><el-icon><Search /></el-icon> 热门搜索</h3>
-        </div>
-        <div class="hot-tags" v-if="hotSearches.length">
-          <el-tag
-            v-for="(h, i) in hotSearches"
-            :key="h.keyword"
-            :size="i < 3 ? 'default' : 'small'"
-            :type="i < 3 ? 'primary' : 'info'"
-            :effect="i < 3 ? 'dark' : 'plain'"
-            class="hot-tag"
-            @click="onHotSearch(h.keyword)"
-          >
-            {{ h.keyword }}
-          </el-tag>
-        </div>
-        <div class="hot-empty" v-else>暂无热门搜索</div>
-      </div>
-    </section>
-
     <!-- 热门标讯列表 -->
     <section class="content-section">
       <div class="section-header">
@@ -180,10 +127,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { MagicStick, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock, Search } from '@element-plus/icons-vue'
+import { MagicStick, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock } from '@element-plus/icons-vue'
 import axios from 'axios'
 import heroArt from '@/assets/brand/hero-illustration.svg'
-import { fetchPublicHot, fetchPortalStats, fetchPublicNoticeTypes, fetchStatsOverview, fetchHotSearches } from '@/api'
+import { fetchPublicHot, fetchPortalStats, fetchPublicNoticeTypes } from '@/api'
 
 const router = useRouter()
 const aiKeyword = ref('')
@@ -191,8 +138,6 @@ const filterOpen = ref<string[]>([])  // 默认收起，点击展开
 const noticeTypes = ref<any[]>([])
 const hotBids = ref<any[]>([])
 const stats = reactive({ total_bids: 0, today_new: 0, sources_enabled: 0 })
-const trend7d = ref<{ date: string; count: number }[]>([])
-const hotSearches = ref<{ keyword: string; count: number }[]>([])
 
 // ===== 服务器时钟：取服务器 Date 头做基准，本地每秒自增，每 3 分钟重新同步 =====
 const clockText = ref('--:--:--')
@@ -221,35 +166,6 @@ const statCards = computed(() => [
   { label: '实时更新中', value: clockText.value, icon: Clock, color: '#10b981' },
   { label: '启用采集源', value: stats.sources_enabled, icon: Connection, color: '#818cf8' },
 ])
-
-// ===== 看板：7天趋势折线图 =====
-const chartW = 400
-const chartH = 120
-const trendPoints = computed(() => {
-  const data = trend7d.value
-  if (!data.length) return []
-  const max = Math.max(...data.map(d => d.count), 1)
-  const step = chartW / (data.length - 1 || 1)
-  return data.map((d, i) => ({
-    x: i * step,
-    y: chartH - (d.count / max) * (chartH - 16) - 8,
-    count: d.count,
-  }))
-})
-const linePath = computed(() => {
-  const pts = trendPoints.value
-  if (!pts.length) return ''
-  return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')
-})
-const areaPath = computed(() => {
-  const pts = trendPoints.value
-  if (!pts.length) return ''
-  return `${linePath.value} L${pts[pts.length - 1].x},${chartH} L${pts[0].x},${chartH} Z`
-})
-
-function onHotSearch(kw: string) {
-  router.push({ path: '/ai-match', query: { q: kw } })
-}
 
 const filter = reactive({
   notice_type_id: null as number | null,
@@ -291,15 +207,12 @@ onMounted(async () => {
   syncTimer = window.setInterval(syncServerClock, 3 * 60 * 1000)
 
   try {
-    const [hot, s, nts, overview, hotWords] = await Promise.all([
+    const [hot, s, nts] = await Promise.all([
       fetchPublicHot(16), fetchPortalStats(), fetchPublicNoticeTypes(),
-      fetchStatsOverview(), fetchHotSearches(12),
     ])
     hotBids.value = hot
     Object.assign(stats, s)
     noticeTypes.value = nts || []
-    trend7d.value = overview?.trend_7d || []
-    hotSearches.value = hotWords || []
   } catch (e) { console.error(e) }
 })
 
@@ -412,44 +325,6 @@ onUnmounted(() => {
   color: var(--line-strong); font-variant-numeric: tabular-nums;
 }
 
-/* ===== 数据看板 ===== */
-.dashboard-bar {
-  max-width: 1200px; margin: 0 auto 24px; padding: 0 24px;
-  display: grid; grid-template-columns: 1.5fr 1fr; gap: 20px;
-}
-.dash-card {
-  background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-lg); padding: 20px 24px;
-  box-shadow: var(--shadow-card);
-}
-.dash-head { margin-bottom: 16px; }
-.dash-kicker {
-  font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
-  color: var(--accent-deep); opacity: 0.7;
-}
-.dash-head h3 {
-  margin: 4px 0 0; font-size: 16px; font-weight: 700;
-  color: var(--ink-900); display: flex; align-items: center; gap: 8px;
-}
-.dash-head h3 :deep(.el-icon) { color: var(--accent-strong); }
-
-/* 趋势图 */
-.trend-chart { position: relative; }
-.trend-chart svg { width: 100%; height: 120px; display: block; }
-.trend-labels {
-  display: flex; justify-content: space-between;
-  margin-top: 8px; font-size: 11px; color: var(--ink-400);
-}
-.trend-empty, .hot-empty {
-  height: 120px; display: flex; align-items: center; justify-content: center;
-  color: var(--ink-400); font-size: 14px;
-}
-
-/* 热门标签 */
-.hot-tags { display: flex; flex-wrap: wrap; gap: 10px; }
-.hot-tag { cursor: pointer; transition: all 0.2s; }
-.hot-tag:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-
 .content-section { max-width: 1200px; margin: 0 auto; padding: 0 24px 8px; }
 .section-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
 .section-header h2 {
@@ -508,9 +383,6 @@ onUnmounted(() => {
   .stat-icon { width: 38px; height: 38px; font-size: 17px; }
   .stat-num { font-size: 21px; }
   .stat-index { display: none; }
-  .dashboard-bar { grid-template-columns: 1fr; gap: 14px; padding: 0 14px; margin-bottom: 16px; }
-  .dash-card { padding: 16px 18px; }
-  .dash-head h3 { font-size: 14px; }
   .content-section { padding: 0 14px 8px; }
   .section-header h2 { font-size: 18px; }
 }

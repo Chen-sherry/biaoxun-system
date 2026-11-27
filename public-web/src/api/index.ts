@@ -19,12 +19,6 @@ export function fetchPublicNoticeTypes() {
 export function fetchPublicRegions(parentId = 0) {
   return request.get('/api/v1/public/dicts/regions', { params: { parent_id: parentId } })
 }
-export function fetchStatsOverview() {
-  return request.get('/api/v1/stats/overview')
-}
-export function fetchHotSearches(limit = 12) {
-  return request.get('/api/v1/ai/hot-searches', { params: { limit } })
-}
 
 // ============ 认证 ============
 export function login(data: { username: string; password: string }) {
