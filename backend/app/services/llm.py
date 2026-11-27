@@ -18,7 +18,6 @@ import asyncio
 import json
 import logging
 import re
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -57,7 +56,8 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
 def record_usage(tag: str, model: str, usage: dict, latency_ms: int = 0) -> None:
-    """把一次调用的 token 用量异步落库（ai_usage_log），失败静默不影响主流程。"""
+    """把一次调用的 token 用量落库（ai_usage_log），失败静默不影响主流程。
+    同步写入（单条 INSERT，毫秒级），保证短生命周期进程也不丢数据。"""
     if not usage:
         return
     try:
@@ -68,24 +68,21 @@ def record_usage(tag: str, model: str, usage: dict, latency_ms: int = 0) -> None
     if not (pt or ct):
         return
 
-    def _write() -> None:
+    try:
+        from app.database import SessionLocal
+        from app.models.ai_usage import AIUsageLog
+        db = SessionLocal()
         try:
-            from app.database import SessionLocal
-            from app.models.ai_usage import AIUsageLog
-            db = SessionLocal()
-            try:
-                db.add(AIUsageLog(
-                    tag=(tag or "")[:32], model=(model or "")[:64],
-                    prompt_tokens=pt, completion_tokens=ct,
-                    total_tokens=pt + ct, latency_ms=int(latency_ms or 0),
-                ))
-                db.commit()
-            finally:
-                db.close()
-        except Exception as e:  # noqa: BLE001
-            logger.debug("[llm] 用量落库失败: %s", e)
-
-    threading.Thread(target=_write, daemon=True).start()
+            db.add(AIUsageLog(
+                tag=(tag or "")[:32], model=(model or "")[:64],
+                prompt_tokens=pt, completion_tokens=ct,
+                total_tokens=pt + ct, latency_ms=int(latency_ms or 0),
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[llm] 用量落库失败: %s", e)
 
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
