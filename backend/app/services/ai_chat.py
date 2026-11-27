@@ -565,10 +565,22 @@ async def ai_chat_stream(
                     return
 
                 # 追加 assistant 消息（含已流出的 content + tool_calls）
+                # 注意：每个 tool_call 对象必须有 type="function"（DeepSeek 协议）
+                normalized_tcs = []
+                for tc in round_tcs:
+                    fn = tc.get("function") or {}
+                    normalized_tcs.append({
+                        "id": tc.get("id") or "",
+                        "type": "function",
+                        "function": {
+                            "name": fn.get("name") or "",
+                            "arguments": fn.get("arguments") or "{}",
+                        },
+                    })
                 llm_messages.append({
                     "role": "assistant",
-                    "content": "".join(round_content),
-                    "tool_calls": round_tcs,
+                    "content": "".join(round_content) or None,
+                    "tool_calls": normalized_tcs,
                 })
                 yield {"type": "status", "text": "正在检索标讯…"}
 
