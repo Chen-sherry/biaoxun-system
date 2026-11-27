@@ -238,3 +238,154 @@ def chat_json(messages: list, *, expect: str = "object",
     except RuntimeError:
         return _run()
     return _LOOP_POOL.submit(_run).result(timeout=timeout + 30)
+
+
+async def achat_stream(
+    messages: list,
+    *,
+    temperature: float = 0.0,
+    max_tokens: Optional[int] = None,
+    timeout: float = 60.0,
+    tools: Optional[list] = None,
+    retries: Optional[int] = None,
+    tag: str = "",
+):
+    """流式 chat completion（async generator）。
+
+    yield ("content", delta)            —— 文本增量
+    yield ("tool_calls", [dict, ...])  —— 完整工具调用列表（一轮结束时，name+arguments 已合并）
+    yield ("usage", dict)              —— usage（末尾）
+    yield ("error", str)               —— 内部错误（不抛，让上层决定如何处理）
+
+    重试仅在首个 token 到达前执行；已流出则直接 yield error 终止，不重试。
+    """
+    if not settings.deepseek_api_key:
+        yield ("error", "DEEPSEEK_API_KEY 未配置")
+        return
+
+    if retries is None:
+        retries = settings.llm_max_retries
+
+    url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.deepseek_api_key}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    payload = _build_payload(
+        messages, temperature=temperature, max_tokens=max_tokens,
+        tools=tools, json_mode=False, tag=tag,
+    )
+    payload["stream"] = True
+    payload["stream_options"] = {"include_usage": True}
+
+    first_token = True
+    last_err: Optional[Exception] = None
+
+    for attempt in range(retries + 1):
+        first_token = True
+        last_err = None
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as r:
+                    if r.status_code in (401, 403):
+                        raise LLMError(
+                            f"DeepSeek 鉴权失败 HTTP {r.status_code}",
+                            kind="auth", status=r.status_code,
+                        )
+                    if r.status_code >= 400:
+                        body = await r.aread()
+                        raise LLMError(
+                            f"DeepSeek HTTP {r.status_code}: {body[:200]}",
+                            kind="http", status=r.status_code,
+                        )
+
+                    # 流式解析
+                    pending: dict = {}   # index -> {id, name, arguments: str}
+                    final_tcs: list = []
+                    got_final_tcs = False
+
+                    async for raw in r.aiter_lines():
+                        if not raw or raw.startswith(":"):
+                            continue
+                        if not raw.startswith("data:"):
+                            continue
+                        line = raw[5:].strip()
+                        if not line:
+                            continue
+                        if line == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        # usage 独立块
+                        if data.get("usage") and not data.get("choices"):
+                            yield ("usage", data["usage"])
+                            continue
+
+                        choices = data.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        finish = choices[0].get("finish_reason")
+
+                        # 文本增量
+                        text = delta.get("content")
+                        if text:
+                            if first_token:
+                                first_token = False
+                            yield ("content", text)
+
+                        # tool_calls 增量（可能多个 index 各出一段）
+                        for tc_chunk in delta.get("tool_calls") or []:
+                            idx = tc_chunk.get("index", 0)
+                            slot = pending.setdefault(idx, {
+                                "id": tc_chunk.get("id") or "",
+                                "function": {"name": "", "arguments": ""},
+                            })
+                            fn = tc_chunk.get("function") or {}
+                            if fn.get("name"):
+                                slot["function"]["name"] = fn["name"]
+                            if fn.get("arguments"):
+                                slot["function"]["arguments"] += fn["arguments"]
+
+                        # finish_reason = "tool_calls" 时组装最终工具调用
+                        if finish == "tool_calls" and pending and not got_final_tcs:
+                            got_final_tcs = True
+                            final_tcs = [pending[k] for k in sorted(pending.keys())]
+                            yield ("tool_calls", final_tcs)
+
+                    # 流结束但没收到 finish_reason=tool_calls，把 pending 兜底发出去
+                    if pending and not got_final_tcs:
+                        final_tcs = [pending[k] for k in sorted(pending.keys())]
+                        yield ("tool_calls", final_tcs)
+
+            # 正常结束跳出重试循环
+            return
+
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last_err = LLMError(f"DeepSeek 流式超时/网络错误: {e}", kind="timeout")
+        except LLMError as e:
+            last_err = e
+            # auth / http 非可重试状态直接跳出
+            if e.kind == "auth":
+                break
+            if e.status and e.status not in _RETRYABLE_STATUS:
+                break
+        except Exception as e:  # noqa: BLE001
+            last_err = LLMError(f"DeepSeek 流式异常: {e}", kind="http")
+
+        if not first_token and attempt > 0:
+            # 已经流出过 token，不再重试
+            break
+        if attempt < retries:
+            logger.warning("[llm.stream] tag=%s 第 %d 次重试: %s", tag, attempt + 1, last_err)
+            continue
+        break
+
+    msg = str(last_err) if last_err else "LLM 流式调用失败"
+    kind = getattr(last_err, "kind", "http") if isinstance(last_err, LLMError) else "http"
+    logger.warning("[llm.stream] tag=%s 终止 kind=%s: %s", tag, kind, msg)
+    yield ("error", msg)

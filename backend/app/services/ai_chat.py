@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
-from app.services.llm import achat, LLMError
+from app.services.llm import achat, achat_stream, LLMError
 from app.services.ai_search import ai_search, _ft_columns, build_ft_query
 
 logger = logging.getLogger(__name__)
@@ -305,7 +305,8 @@ async def _exec_tool(name: str, args: Dict[str, Any],
                 out["total_hits"] = data.get("total_hits")
             return out
         if name == "count_bids":
-            return _count_bids_db(
+            return await asyncio.to_thread(
+                _count_bids_db,
                 keywords=args.get("keywords"),
                 region=args.get("region"),
                 days=args.get("days"),
@@ -315,7 +316,7 @@ async def _exec_tool(name: str, args: Dict[str, Any],
                 bid_id = int(args.get("id"))
             except (TypeError, ValueError):
                 return {"error": "id 必须是整数"}
-            return _get_bid_detail_db(bid_id)
+            return await asyncio.to_thread(_get_bid_detail_db, bid_id)
         return {"error": f"unknown tool {name}"}
     except Exception as e:  # noqa: BLE001
         logger.warning("[ai_chat] 工具执行失败 tool=%s: %s", name, e, exc_info=True)
@@ -432,11 +433,19 @@ async def ai_chat(
 
 
 # ================================================================== #
-#  标讯上下文注入（防幻觉：最新 30 条标题，只读）
+#  标讯上下文注入（防幻觉：最新 30 条标题，只读）+ TTL 60s 缓存
 # ================================================================== #
 
+_CONTEXT_CACHE: Dict[str, Any] = {"data": "", "ts": 0.0}
+_CONTEXT_CACHE_TTL = 60
+
+
 def _get_context_snippet() -> str:
-    """取最新 30 条标讯标题/时间/中标人，拼成简短上下文。"""
+    """取最新 30 条标讯标题/时间/中标人，拼成简短上下文（60s TTL）。"""
+    now = time.time()
+    cached = _CONTEXT_CACHE.get("ts") or 0
+    if now - cached < _CONTEXT_CACHE_TTL and _CONTEXT_CACHE["data"]:
+        return _CONTEXT_CACHE["data"]
     try:
         from app.database import SessionLocal
         from sqlalchemy import text
@@ -453,10 +462,175 @@ def _get_context_snippet() -> str:
             t = str(r[2])[:10] if r[2] else "未知日期"
             w = f"｜中标：{r[3]}" if r[3] else ""
             lines.append(f"- [{r[0]}] {r[1]}（{t}）{w}")
-        if not lines:
-            return ""
-        return ("【库内最新标讯（仅参考，真实查询请调用工具）】\n"
-                + "\n".join(lines))
+        snippet = ""
+        if lines:
+            snippet = ("【库内最新标讯（仅参考，真实查询请调用工具）】\n"
+                       + "\n".join(lines))
+        _CONTEXT_CACHE["data"] = snippet
+        _CONTEXT_CACHE["ts"] = now
+        return snippet
     except Exception:
         logger.warning("[ai_chat] 上下文注入失败", exc_info=True)
         return ""
+
+
+# ================================================================== #
+#  流式主入口：多轮对话（四段管道，异步生成器）
+# ================================================================== #
+
+async def ai_chat_stream(
+    messages: List[Dict[str, str]],
+    inject_context: bool = True,
+):
+    """流式多轮 AI 助手对话（async generator）。
+
+    yield {"type": "status",  "text": "..."}                —— 阶段提示
+    yield {"type": "delta",   "text": "..."}                —— 文本增量
+    yield {"type": "results", "results":[...], "query":"..."} —— 工具产出的卡片（工具轮结束即发）
+    yield {"type": "done",    "reply":..., "results":..., "tool_calls":..., "truncated":...}
+    yield {"type": "error",   "message": "..."}
+    """
+    if not settings.deepseek_api_key:
+        yield {"type": "error",
+               "message": "AI 助手未配置 DeepSeek API Key，请联系管理员。"}
+        return
+
+    # ① 记忆窗口
+    history, truncated = trim_history(messages)
+
+    # ② 意图分类
+    last_user = next(
+        (m.get("content") or "" for m in reversed(history)
+         if m.get("role") == "user"), "")
+    intent = classify_intent(last_user)
+
+    # ③ system + （可选）上下文
+    system = CHAT_SYSTEM_PROMPT
+    if inject_context and _should_inject_context(intent, history):
+        # 包 to_thread 让同步 DB 查询不阻塞事件循环（含 TTL 缓存）
+        ctx = await asyncio.to_thread(_get_context_snippet)
+        if ctx:
+            system += "\n\n" + ctx
+
+    llm_messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
+    llm_messages += [{"role": m["role"], "content": m["content"]} for m in history]
+
+    results_acc: List[Dict[str, Any]] = []
+    tool_calls_log: List[str] = []
+    deadline = time.time() + TOTAL_DEADLINE_S
+
+    yield {"type": "status", "text": "AI 思考中…"}
+
+    try:
+        for round_i in range(TOOL_ROUNDS + 1):
+            remaining = deadline - time.time()
+            if remaining <= 5:
+                break
+            use_tools = round_i < TOOL_ROUNDS
+            round_content: List[str] = []
+            round_tcs: Optional[list] = None
+            stream_finished = False
+
+            async for kind, payload in achat_stream(
+                llm_messages,
+                tools=TOOLS if use_tools else None,
+                max_tokens=MAX_TOKENS,
+                timeout=max(5.0, min(45.0, remaining)),
+                tag="chat",
+            ):
+                if kind == "error":
+                    yield {"type": "error", "message": str(payload)}
+                    return
+                if kind == "content":
+                    round_content.append(payload)
+                    yield {"type": "delta", "text": payload}
+                elif kind == "tool_calls":
+                    round_tcs = payload
+                    stream_finished = True
+                    break
+                # usage 忽略
+                # 注意：当无 tool_calls 时，achat_stream 自然结束后 for-async 循环退出，
+                # 此时 stream_finished=False、round_tcs=None，走到下面的"最终回答"分支
+
+            # 如果本轮收到了 tool_calls，执行工具并继续下一轮
+            if round_tcs:
+                if not use_tools:
+                    # 最后一轮还想要工具：收口
+                    reply = "".join(round_content).strip() or ""
+                    if not reply:
+                        reply = "⚠️ AI 想继续调用工具但已到上限，请换个问法。"
+                    yield {"type": "done", "reply": reply,
+                           "results": results_acc, "tool_calls": tool_calls_log,
+                           "truncated": truncated}
+                    return
+
+                # 追加 assistant 消息（含已流出的 content + tool_calls）
+                llm_messages.append({
+                    "role": "assistant",
+                    "content": "".join(round_content),
+                    "tool_calls": round_tcs,
+                })
+                yield {"type": "status", "text": "正在检索标讯…"}
+
+                # 并行执行所有工具
+                tasks = []
+                prev_count = len(results_acc)
+                for tc in round_tcs:
+                    fn = tc.get("function", {})
+                    name = fn.get("name") or ""
+                    tool_calls_log.append(name)
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                        if not isinstance(args, dict):
+                            args = {}
+                    except json.JSONDecodeError:
+                        args = {}
+                    tasks.append(_exec_tool(name, args, results_acc))
+
+                outs = await asyncio.gather(*tasks, return_exceptions=True)
+                for tc, out in zip(round_tcs, outs):
+                    if isinstance(out, Exception):
+                        out = {"error": f"工具异常: {out}"}
+                    llm_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id"),
+                        "content": json.dumps(out, ensure_ascii=False, default=str),
+                    })
+
+                logger.info("[ai_chat.stream] route=%s round=%d tools=%s", intent,
+                            round_i + 1, ",".join(tool_calls_log[-len(round_tcs):]))
+
+                # 发最新 results（仅新增）
+                if len(results_acc) > prev_count:
+                    yield {"type": "results",
+                           "results": list(results_acc),
+                           "query": last_user}
+                continue
+
+            # 无 tool_calls：这是最终回答
+            reply = "".join(round_content).strip()
+            if not reply:
+                if time.time() >= deadline:
+                    reply = "⚠️ 本次对话耗时过长，请稍后重试，或把问题拆简单一点。"
+                else:
+                    reply = "⚠️ AI 未返回内容，请重试。"
+            yield {"type": "done", "reply": reply,
+                   "results": results_acc, "tool_calls": tool_calls_log,
+                   "truncated": truncated}
+            return
+
+        # 走出循环（超时或轮次耗尽）
+        if time.time() >= deadline:
+            reply = "⚠️ 本次对话耗时过长，请稍后重试，或把问题拆简单一点。"
+        else:
+            reply = "⚠️ 对话轮次过多，请换个更简单的问法。"
+        yield {"type": "done", "reply": reply,
+               "results": results_acc, "tool_calls": tool_calls_log,
+               "truncated": truncated}
+
+    except LLMError as e:
+        logger.warning("[ai_chat.stream] LLM error kind=%s: %s", e.kind, e)
+        yield {"type": "error", "message": f"AI 暂时不可用：{str(e)[:80]}"}
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[ai_chat.stream] 对话异常: %s", e)
+        yield {"type": "error", "message": "AI 服务暂时不可用，请稍后再试。"}

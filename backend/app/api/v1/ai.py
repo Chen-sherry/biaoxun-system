@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """AI 助手 + AI 匹配 两个接口"""
+import json as _json
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -8,7 +11,7 @@ from app.api.deps import get_current_user_optional, require_member
 from app.models.user import SysUser
 from app.schemas.bid import AIMatchRequest, MatchedBid
 from app.services.deepseek_match import match_bids_for_user
-from app.services.ai_chat import ai_chat
+from app.services.ai_chat import ai_chat, ai_chat_stream
 from app.services.ai_search import ai_search
 from app.utils.response import ApiResponse
 
@@ -99,7 +102,36 @@ async def chat(
     return ApiResponse.ok(result)
 
 
-# ============ AI 智能匹配（P1 已有，接 API 后切 LLM） ============
+@router.post("/chat/stream", summary="多轮 AI 助手对话（流式 SSE，付费会员可用）")
+async def chat_stream(
+    req: ChatIn,
+    current_user: SysUser = Depends(require_member(min_level=2)),
+):
+    """
+    P2 AI 悬浮球：流式多轮对话助手。
+    - 依赖/频控与 /ai/chat 完全一致：会员门槛 + 每日 chat_daily_limit 条
+    - 事件格式：data: {json}\\n\\n；type ∈ {status, delta, results, done, error}
+    - nginx 通过 X-Accel-Buffering: no 关闭缓冲，SSE 逐条透传
+    """
+    cleaned = [
+        {"role": m.role if m.role in ("user", "assistant") else "user", "content": m.content}
+        for m in req.messages
+    ]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="messages 不能为空")
+
+    _chat_rate_limit(current_user.id)
+
+    async def _gen():
+        async for event in ai_chat_stream(cleaned, inject_context=req.inject_context):
+            yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers=headers)
 
 @router.post("/match", response_model=ApiResponse[list[MatchedBid]], summary="AI 智能匹配")
 async def ai_match(
