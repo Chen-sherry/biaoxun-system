@@ -31,6 +31,7 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 
 from app.config import settings
+from app.services import ai_setting_service as svc
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 AI_TIMEOUT = 30.0
 _AI_MAX_RETRIES = 1
 _TEXT_TRUNCATE = 4000
+
+# 系统提示词兜底（DB 里 prompt.extract_ai 配了就用 DB 的，没配用这份）
+EXTRACT_SYSTEM_PROMPT = "你是招投标公告信息提取引擎，只输出 JSON，不要任何解释。"
 
 _FIELD_DESC = {
     "tenderee": "采购人/招标人/项目单位的全称（公告中负责采购的主体）",
@@ -209,20 +213,22 @@ def ai_extract_missing(title: str, content_text: str,
     """
     if not missing:
         return {}, True
-    key = settings.deepseek_api_key
+    # 从 AI 设置（DB）读模型/key，未配置时回退 config.py / .env
+    model_cfg = svc.get_model("extract_ai")
+    key = model_cfg.get("api_key") or settings.deepseek_api_key
     if not key:
-        logger.debug("[ai_extract] deepseek_api_key 未配置，跳过 AI 提取")
+        logger.debug("[ai_extract] api_key 未配置，跳过 AI 提取")
         return {}, True
 
     text = (content_text or "")[:_TEXT_TRUNCATE]
     if not text:
         return {}, True
 
+    system_prompt = svc.get_prompt("prompt.extract_ai", EXTRACT_SYSTEM_PROMPT)
     payload = {
-        "model": settings.deepseek_model,
+        "model": model_cfg.get("model") or settings.deepseek_model,
         "messages": [
-            {"role": "system",
-             "content": "你是招投标公告信息提取引擎，只输出 JSON，不要任何解释。"},
+            {"role": "system", "content": system_prompt},
             {"role": "user",
              "content": _build_user_prompt(title or "", text, missing,
                                            class_options)},
@@ -230,7 +236,8 @@ def ai_extract_missing(title: str, content_text: str,
         "max_tokens": 600,
         "temperature": 0,
     }
-    url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
+    base_url = model_cfg.get("base_url") or settings.deepseek_base_url
+    url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {"Authorization": f"Bearer {key}"}
 
     raw_json: Optional[Dict] = None

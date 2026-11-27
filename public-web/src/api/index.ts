@@ -20,11 +20,6 @@ export function fetchPublicRegions(parentId = 0) {
   return request.get('/api/v1/public/dicts/regions', { params: { parent_id: parentId } })
 }
 
-// ============ AI 搜索 ============
-export function aiMatch(data: { keywords: string[]; days?: number; limit?: number }) {
-  return request.post('/api/v1/ai/match', data)
-}
-
 // ============ 认证 ============
 export function login(data: { username: string; password: string }) {
   return request.post('/api/v1/auth/login', data)

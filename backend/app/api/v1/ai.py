@@ -5,15 +5,14 @@ import json as _json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 
-from app.api.deps import get_current_user_optional, require_member
+from app.api.deps import require_member
 from app.models.user import SysUser
-from app.schemas.bid import AIMatchRequest, MatchedBid
-from app.services.deepseek_match import match_bids_for_user
 from app.services.ai_chat import ai_chat, ai_chat_stream
 from app.services.ai_search import ai_search
 from app.services.ai_setting_service import get_param_int as _param_int
+from app.services import ai_setting_service as _ai_svc
 from app.utils.response import ApiResponse
 
 router = APIRouter(prefix="/ai", tags=["AI 功能"])
@@ -135,32 +134,13 @@ async def chat_stream(
     }
     return StreamingResponse(_gen(), media_type="text/event-stream", headers=headers)
 
-@router.post("/match", response_model=ApiResponse[list[MatchedBid]], summary="AI 智能匹配")
-async def ai_match(
-    req: AIMatchRequest,
-    current_user: Optional[SysUser] = Depends(get_current_user_optional),
-):
-    """
-    根据订阅关键词 + 最近 N 天标讯，走 DeepSeek LLM 做语义打分。
-    - 未配置 DEEPSEEK_API_KEY 时自动降级为本地关键词加权
-    - 门户可匿名调用；登录会员体验更完整
-    """
-    if not req.keywords:
-        raise HTTPException(status_code=400, detail="keywords 不能为空")
-    result = await match_bids_for_user(
-        keywords=req.keywords,
-        days=req.days,
-        limit=req.limit,
-    )
-    return ApiResponse(code=0, data=result, message="ok")
-
-
 @router.get("/config", summary="AI 服务状态")
 async def ai_match_config():
     from app.config import settings
+    model_cfg = _ai_svc.get_model("chat_system")
     return ApiResponse(code=0, data={
-        "deepseek_enabled": bool(settings.deepseek_api_key),
-        "deepseek_model": settings.deepseek_model,
+        "deepseek_enabled": bool(model_cfg.get("api_key") or settings.deepseek_api_key),
+        "deepseek_model": model_cfg.get("model") or settings.deepseek_model,
         "fallback_to_local": True,
         "chat_enabled": True,   # 多轮 AI 助手是否可用
         "chat_daily_limit": _param_int("param.chat_daily_limit", settings.chat_daily_limit),

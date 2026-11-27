@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 
 from app.config import settings
+from app.services import ai_setting_service as svc
 from app.services.data_clean import parse_budget_wan
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ TRANSLATE_PROMPT = """你是标讯（招投标公告）检索系统的查询转�
 3. keywords 必须覆盖检索主题核心名词（如"学校""医院"），不得用"项目""招标"这类泛词顶替
 
 只输出 JSON，不要任何其他文字。示例输出：
-{{"keywords":["学校","消防设施改造"],"synonyms":["中小学","幼儿园"],"region_code":"340100","region_name":"合肥","date_from":"2026-10-24","date_to":null,"notice_type":"中标公告","procure_type":null,"customer_group":null,"budget_min":null,"budget_max":null}}
+{"keywords":["学校","消防设施改造"],"synonyms":["中小学","幼儿园"],"region_code":"340100","region_name":"合肥","date_from":"2026-10-24","date_to":null,"notice_type":"中标公告","procure_type":null,"customer_group":null,"budget_min":null,"budget_max":null}
 """
 
 
@@ -91,13 +92,17 @@ def _default_cond(query: str) -> Dict[str, Any]:
 def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
     """大白话 → 结构化条件。返回 (条件, LLM 是否成功)。失败降级为纯关键词。"""
     default = _default_cond(query)
-    if not settings.deepseek_api_key:
+    model_cfg = svc.get_model("search")
+    if not (model_cfg.get("api_key") or settings.deepseek_api_key):
         return default, False
     try:
         from app.services.llm import chat_json
+        prompt = svc.get_prompt("prompt.search_translate", TRANSLATE_PROMPT)
+        # 用 replace 而非 format：Prompt 可在 admin 后台编辑，避免用户写入花括号导致格式化异常
+        prompt_text = prompt.replace("{today}", _today())
         data = chat_json(
             [
-                {"role": "system", "content": TRANSLATE_PROMPT.format(today=_today())},
+                {"role": "system", "content": prompt_text},
                 {"role": "user", "content": query},
             ],
             expect="object",
@@ -105,6 +110,7 @@ def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
             timeout=30,
             json_mode=True,
             tag="translate",
+            model_override=model_cfg,
         )
         if not isinstance(data.get("keywords"), list) or not data["keywords"]:
             data["keywords"] = default["keywords"]
@@ -499,6 +505,8 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
                  cond_note: str = "") -> List[Dict[str, Any]]:
     """对一个批次（SCORING_CHUNK 条）调用 LLM 打分；失败抛异常由调用方按批降级。"""
     from app.services.llm import chat_json
+    model_cfg = svc.get_model("search")
+    prompt = svc.get_prompt("prompt.search_score", SCORE_PROMPT)
     items = [
         {"id": c["id"], "title": c["title"],
          "snippet": (c.get("snippet") or "")[:160],
@@ -511,7 +519,7 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
     ]
     scores = chat_json(
         [
-            {"role": "system", "content": SCORE_PROMPT},
+            {"role": "system", "content": prompt},
             {"role": "user", "content":
                 f"用户检索意图：{query}{cond_note}{date_note}\n\n候选公告 JSON：\n"
                 + json.dumps(items, ensure_ascii=False)},
@@ -522,6 +530,7 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
         max_tokens=6000,
         timeout=60,
         tag="score",
+        model_override=model_cfg,
     )
     by_id = {int(s["id"]): s for s in scores
              if isinstance(s, dict) and s.get("id") is not None}
@@ -541,7 +550,8 @@ def score_candidates(query: str, candidates: List[Dict[str, Any]],
     返回 (按分数降序的完整结果, 诊断 {batch_failures, llm_score_ok})。"""
     if not candidates:
         return [], {"batch_failures": 0, "llm_score_ok": False}
-    if not settings.deepseek_api_key:
+    model_cfg = svc.get_model("search")
+    if not (model_cfg.get("api_key") or settings.deepseek_api_key):
         return _local_score(query, candidates), {"batch_failures": 0, "llm_score_ok": False}
 
     date_note = ""
