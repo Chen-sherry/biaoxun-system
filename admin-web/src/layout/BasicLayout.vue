@@ -103,10 +103,10 @@ const menuList = computed(() =>
 // 分组定义（key 同时是 el-sub-menu index）
 const GROUP_DEFS = [
   { key: 'bid',     title: '标讯管理',   icon: 'Document',    match: ['bid/'] },
-  { key: 'data',    title: '采集与数据', icon: 'MagicStick',  match: ['crawl/', 'data/', 'ai/'] },
+  { key: 'data',    title: '采集与数据', icon: 'MagicStick',  match: ['crawl/', 'data/'] },
   { key: 'push',    title: '推送中心',   icon: 'Promotion',   match: ['push/'] },
   { key: 'member',  title: '会员与用户', icon: 'Medal',       match: ['member/', 'user/'] },
-  { key: 'setting', title: '系统设置',   icon: 'Setting',     match: ['setting/'] },
+  { key: 'setting', title: '系统设置',   icon: 'Setting',     match: ['setting/', 'ai/'] },
 ]
 
 const groupedMenus = computed(() => {
