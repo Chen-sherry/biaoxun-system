@@ -2,11 +2,12 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from sqlalchemy import func, desc
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.bid import BidInfo, BidSource
+from app.models.dict import DictNoticeType, DictRegion
 from app.utils.response import ApiResponse
 
 router = APIRouter(prefix="/stats")
@@ -61,3 +62,56 @@ def overview(db: Session = Depends(get_db)):
         "trend_7d": trend,
         "latest_pending": pending_preview,
     })
+
+
+@router.get("/today-by-type", summary="当日各公告类型新增数量 Top4")
+def today_by_type(db: Session = Depends(get_db)):
+    """当日新增标讯按公告类型分组，取数量前4"""
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    rows = (
+        db.query(
+            DictNoticeType.name,
+            func.count(BidInfo.id).label("count")
+        )
+        .join(DictNoticeType, BidInfo.notice_type_id == DictNoticeType.id)
+        .filter(
+            BidInfo.status == 1,
+            BidInfo.created_at >= today_start
+        )
+        .group_by(BidInfo.notice_type_id, DictNoticeType.name)
+        .order_by(desc("count"))
+        .limit(4)
+        .all()
+    )
+
+    return ApiResponse.ok([{"type": r.name, "count": r.count} for r in rows])
+
+
+@router.get("/region-top10", summary="当月标讯地区分布 Top10")
+def region_top10(db: Session = Depends(get_db)):
+    """当月新增标讯按省级地区分组，取数量前10"""
+    month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # 取省级地区代码前2位
+    region_code_prefix = func.substr(BidInfo.region_code, 1, 2)
+
+    rows = (
+        db.query(
+            DictRegion.name,
+            func.count(BidInfo.id).label("count")
+        )
+        .join(DictRegion, func.substr(DictRegion.code, 1, 2) == region_code_prefix)
+        .filter(
+            DictRegion.level == 1,  # 省级
+            BidInfo.status == 1,
+            BidInfo.created_at >= month_start,
+            BidInfo.region_code.isnot(None)
+        )
+        .group_by(DictRegion.name)
+        .order_by(desc("count"))
+        .limit(10)
+        .all()
+    )
+
+    return ApiResponse.ok([{"region": r.name, "count": r.count} for r in rows])

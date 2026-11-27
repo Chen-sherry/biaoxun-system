@@ -92,6 +92,46 @@
       </div>
     </section>
 
+    <!-- 数据看板 -->
+    <section class="dashboard-bar" v-if="todayByType.length || regionTop10.length">
+      <div class="dash-card">
+        <div class="dash-head">
+          <span class="dash-kicker">TODAY BY TYPE</span>
+          <h3><el-icon><PieChart /></el-icon> 今日新增 · 公告类型 Top4</h3>
+        </div>
+        <div class="bar-chart" v-if="todayByType.length">
+          <div class="bar-item" v-for="item in todayByType" :key="item.type">
+            <span class="bar-label">{{ item.type }}</span>
+            <div class="bar-track">
+              <div class="bar-fill" :style="{ width: getBarWidth(item.count, maxTypeCount) }">
+                <span class="bar-value">{{ item.count }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dash-empty" v-else>今日暂无数据</div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-head">
+          <span class="dash-kicker">REGION TOP 10</span>
+          <h3><el-icon><MapLocation /></el-icon> 本月标讯 · 地区分布</h3>
+        </div>
+        <div class="h-bar-chart" v-if="regionTop10.length">
+          <div class="h-bar-item" v-for="(item, idx) in regionTop10" :key="item.region">
+            <span class="h-bar-rank">{{ idx + 1 }}</span>
+            <span class="h-bar-label">{{ item.region }}</span>
+            <div class="h-bar-track">
+              <div class="h-bar-fill" :style="{ width: getBarWidth(item.count, maxRegionCount) }">
+                <span class="h-bar-value">{{ item.count }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dash-empty" v-else>本月暂无数据</div>
+      </div>
+    </section>
+
     <!-- 热门标讯列表 -->
     <section class="content-section">
       <div class="section-header">
@@ -127,7 +167,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { MagicStick, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock } from '@element-plus/icons-vue'
+import { MagicStick, Operation, Right, DataLine, TrendCharts, Calendar, Location, OfficeBuilding, Tickets, Refresh, Connection, Clock, PieChart, MapLocation } from '@element-plus/icons-vue'
 import axios from 'axios'
 import heroArt from '@/assets/brand/hero-illustration.svg'
 import { fetchPublicHot, fetchPortalStats, fetchPublicNoticeTypes } from '@/api'
@@ -138,6 +178,15 @@ const filterOpen = ref<string[]>([])  // 默认收起，点击展开
 const noticeTypes = ref<any[]>([])
 const hotBids = ref<any[]>([])
 const stats = reactive({ total_bids: 0, today_new: 0, sources_enabled: 0 })
+const todayByType = ref<{ type: string; count: number }[]>([])
+const regionTop10 = ref<{ region: string; count: number }[]>([])
+
+// 看板柱状图宽度计算
+const maxTypeCount = computed(() => Math.max(...todayByType.value.map(i => i.count), 1))
+const maxRegionCount = computed(() => Math.max(...regionTop10.value.map(i => i.count), 1))
+function getBarWidth(count: number, max: number) {
+  return `${Math.max((count / max) * 100, 8)}%`
+}
 
 // ===== 服务器时钟：取服务器 Date 头做基准，本地每秒自增，每 3 分钟重新同步 =====
 const clockText = ref('--:--:--')
@@ -207,12 +256,16 @@ onMounted(async () => {
   syncTimer = window.setInterval(syncServerClock, 3 * 60 * 1000)
 
   try {
-    const [hot, s, nts] = await Promise.all([
+    const [hot, s, nts, typeData, regionData] = await Promise.all([
       fetchPublicHot(16), fetchPortalStats(), fetchPublicNoticeTypes(),
+      axios.get('/api/v1/stats/today-by-type').then(r => r.data.data || []),
+      axios.get('/api/v1/stats/region-top10').then(r => r.data.data || []),
     ])
     hotBids.value = hot
     Object.assign(stats, s)
     noticeTypes.value = nts || []
+    todayByType.value = typeData
+    regionTop10.value = regionData
   } catch (e) { console.error(e) }
 })
 
@@ -325,6 +378,77 @@ onUnmounted(() => {
   color: var(--line-strong); font-variant-numeric: tabular-nums;
 }
 
+/* ===== 数据看板 ===== */
+.dashboard-bar {
+  max-width: 1200px; margin: 0 auto 24px; padding: 0 24px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+}
+.dash-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: 20px 24px;
+  box-shadow: var(--shadow-card);
+}
+.dash-head { margin-bottom: 18px; }
+.dash-kicker {
+  font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+  color: var(--accent-deep); opacity: 0.7;
+}
+.dash-head h3 {
+  margin: 4px 0 0; font-size: 16px; font-weight: 700;
+  color: var(--ink-900); display: flex; align-items: center; gap: 8px;
+}
+.dash-head h3 :deep(.el-icon) { color: var(--accent-strong); }
+.dash-empty {
+  height: 120px; display: flex; align-items: center; justify-content: center;
+  color: var(--ink-400); font-size: 14px;
+}
+
+/* 纵向柱状图（公告类型） */
+.bar-chart { display: flex; flex-direction: column; gap: 14px; }
+.bar-item { display: flex; align-items: center; gap: 12px; }
+.bar-label {
+  flex: none; width: 80px; font-size: 13px; font-weight: 500;
+  color: var(--ink-700); text-align: right; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.bar-track {
+  flex: 1; height: 28px; background: var(--surface-soft);
+  border-radius: 6px; overflow: hidden;
+}
+.bar-fill {
+  height: 100%; background: linear-gradient(90deg, var(--accent-strong), var(--accent-cyan));
+  border-radius: 6px; display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 10px; transition: width 0.6s var(--ease);
+}
+.bar-value { font-size: 12px; font-weight: 700; color: #fff; }
+
+/* 横向柱状图（地区分布） */
+.h-bar-chart { display: flex; flex-direction: column; gap: 10px; }
+.h-bar-item { display: flex; align-items: center; gap: 10px; }
+.h-bar-rank {
+  flex: none; width: 20px; height: 20px; border-radius: 4px;
+  background: var(--surface-soft); font-size: 11px; font-weight: 700;
+  color: var(--ink-500); display: grid; place-items: center;
+}
+.h-bar-item:nth-child(-n+3) .h-bar-rank {
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep));
+  color: #fff;
+}
+.h-bar-label {
+  flex: none; width: 60px; font-size: 13px; font-weight: 500;
+  color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.h-bar-track {
+  flex: 1; height: 22px; background: var(--surface-soft);
+  border-radius: 4px; overflow: hidden;
+}
+.h-bar-fill {
+  height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-cyan));
+  border-radius: 4px; display: flex; align-items: center; justify-content: flex-end;
+  padding-right: 8px; transition: width 0.6s var(--ease);
+}
+.h-bar-value { font-size: 11px; font-weight: 700; color: var(--ink-700); }
+
 .content-section { max-width: 1200px; margin: 0 auto; padding: 0 24px 8px; }
 .section-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
 .section-header h2 {
@@ -383,6 +507,11 @@ onUnmounted(() => {
   .stat-icon { width: 38px; height: 38px; font-size: 17px; }
   .stat-num { font-size: 21px; }
   .stat-index { display: none; }
+  .dashboard-bar { grid-template-columns: 1fr; gap: 14px; padding: 0 14px; margin-bottom: 16px; }
+  .dash-card { padding: 16px 18px; }
+  .dash-head h3 { font-size: 14px; }
+  .bar-label { width: 60px; font-size: 12px; }
+  .h-bar-label { width: 50px; font-size: 12px; }
   .content-section { padding: 0 14px 8px; }
   .section-header h2 { font-size: 18px; }
 }
