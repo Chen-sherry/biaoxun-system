@@ -27,7 +27,7 @@ def search(
     req: AISearchIn,
     _: SysUser = Depends(require_member(min_level=2)),
 ):
-    """大白话 → AI 转译 → 知识库检索 → 相关性评分，>=75 分高度相关、60~74 分辅助展示。
+    """大白话 → AI 转译 → 知识库检索 → 相关性评分，>=70 分高度相关、60~69 分辅助展示。
     未登录 401 / 非付费会员 403，前端据此提示开通会员。"""
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="检索内容不能为空")

@@ -107,9 +107,9 @@ const translated = ref<any>(null)
 const diagnostics = ref<any>(null)
 const dateRelaxed = ref(false)
 
-// ===== 分档渐进展示：默认 75+，每点一次加载更多降一档（60→40→20→0） =====
-const BANDS = [75, 60, 40, 20, 0]
-const minScore = ref(75)
+// ===== 分档渐进展示：默认 70+，每点一次加载更多降一档（60→40→20→0） =====
+const BANDS = [70, 60, 40, 20, 0]
+const minScore = ref(70)
 
 const visibleItems = computed(() => items.value.filter(i => i.score >= minScore.value))
 const hiddenCount = computed(() => items.value.length - visibleItems.value.length)
@@ -129,9 +129,9 @@ function loadMore() {
   if (nb >= 0) minScore.value = nb
 }
 
-// 初始档位：没有 75+ 时从 60 起步；连 60 都没有（兜底）则直接全量显示
+// 初始档位：没有 70+ 时从 60 起步；连 60 都没有（兜底）则直接全量显示
 function initBand() {
-  if (items.value.some(i => i.score >= 75)) minScore.value = 75
+  if (items.value.some(i => i.score >= 70)) minScore.value = 70
   else if (items.value.some(i => i.score >= 60)) minScore.value = 60
   else minScore.value = 0
 }
@@ -149,7 +149,7 @@ function bandDivider(index: number): string | null {
   const cur = list[index]
   const prev = index > 0 ? list[index - 1] : null
   if (!prev || !cur) return null
-  if (prev.score >= 75 && cur.score < 75) return '以下为辅助推荐（60~74 分，可能不完全匹配）'
+  if (prev.score >= 70 && cur.score < 70) return '以下为辅助推荐（60~69 分，可能不完全匹配）'
   if (prev.score >= 60 && cur.score < 60) return '以下为一般相关（40~59 分，仅供参考）'
   if (prev.score >= 40 && cur.score < 40) return '以下为弱相关（20~39 分，谨慎参考）'
   if (prev.score >= 20 && cur.score < 20) return '以下为低相关（低于 20 分，兜底参考）'
@@ -207,7 +207,7 @@ async function doAiSearch() {
   diagnostics.value = null
   dateRelaxed.value = false
   fallbackUsed.value = false
-  minScore.value = 75
+  minScore.value = 70
   try {
     const token = localStorage.getItem('token')
     const res = await axios.post(`${import.meta.env.VITE_API_BASE || ''}/api/v1/ai/search`,
@@ -315,7 +315,7 @@ onMounted(async () => {
       <div class="page-head">
         <span class="section-kicker">AI SEMANTIC SEARCH</span>
         <h1>智能检索</h1>
-        <p>描述需求，AI 转译 + 语义评分，默认展示 75+ 高相关</p>
+        <p>描述需求，AI 转译 + 语义评分，默认展示 70+ 高相关</p>
       </div>
 
       <el-card shadow="never" class="main-card tech-card">
@@ -366,7 +366,7 @@ onMounted(async () => {
               </div>
             </div>
           </div>
-          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 默认展示 75+ 高相关</div>
+          <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 默认展示 70+ 高相关</div>
         </div>
 
         <!-- 加载中 -->
@@ -406,15 +406,15 @@ onMounted(async () => {
               <span class="tier-divider-text">{{ bandDivider(index) }}</span>
             </div>
             <div class="result-card" @click="viewDetail(item.id)">
-              <div class="score-badge" :class="{ mid: item.score < 75, low: item.score < 60 }">
+              <div class="score-badge" :class="{ mid: item.score < 70, low: item.score < 60 }">
                 <div class="score-num">{{ item.score }}</div>
                 <div class="score-label">AI 评分</div>
               </div>
               <div class="result-main">
                 <div class="result-title">{{ item.title }}</div>
                 <div class="result-reason">
-                  <el-tag size="small" :type="item.score >= 75 ? 'success' : item.score >= 60 ? 'info' : 'warning'" effect="dark">
-                    {{ item.score >= 75 ? '高相关' : item.score >= 60 ? '辅助推荐' : '兜底参考' }}
+                  <el-tag size="small" :type="item.score >= 70 ? 'success' : item.score >= 60 ? 'info' : 'warning'" effect="dark">
+                    {{ item.score >= 70 ? '高相关' : item.score >= 60 ? '辅助推荐' : '兜底参考' }}
                   </el-tag>
                   <span v-if="item.reason" class="reason-text">{{ item.reason }}</span>
                 </div>

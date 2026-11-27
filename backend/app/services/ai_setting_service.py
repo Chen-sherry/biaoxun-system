@@ -176,6 +176,47 @@ def get_prompt(key: str, fallback: str = "") -> str:
     return str(v)
 
 
+def code_prompt_defaults() -> Dict[str, str]:
+    """收集各 prompt.* 在源码里的默认文案。
+
+    注意：get_prompt 优先读 DB，所以 DB 一旦有值，源码常量的修改就不会再生效。
+    本函数把源码常量集中起来，供「漂移检测」和「一键重置为源码默认」使用。
+    惰性 import 各业务模块，避免模块级循环依赖。
+    """
+    out: Dict[str, str] = {}
+
+    def _pick(module_name: str, const_name: str, key: str) -> None:
+        try:
+            import importlib
+            mod = importlib.import_module(f"app.services.{module_name}")
+            val = getattr(mod, const_name, None)
+            if isinstance(val, str) and val:
+                out[key] = val
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[ai_setting] 读取 %s 的源码默认失败: %s", key, e)
+
+    _pick("ai_search", "TRANSLATE_PROMPT", "prompt.search_translate")
+    _pick("ai_search", "SCORE_PROMPT", "prompt.search_score")
+    _pick("ai_chat", "CHAT_SYSTEM_PROMPT", "prompt.chat_system")
+    _pick("ai_extract", "EXTRACT_SYSTEM_PROMPT", "prompt.extract_ai")
+    _pick("ai_push", "SYSTEM_PROMPT", "prompt.push_generate")
+    return out
+
+
+def check_prompt_drift(db) -> List[str]:
+    """对比 DB 中的 Prompt 与源码默认值，返回内容不一致的 key 列表（DB 与代码漂移）。"""
+    defaults = code_prompt_defaults()
+    if not defaults:
+        return []
+    rows = {
+        r.setting_key: r.value
+        for r in db.query(AISetting)
+        .filter(AISetting.setting_key.in_(list(defaults)))
+        .all()
+    }
+    return [k for k, dv in defaults.items() if rows.get(k) is not None and rows.get(k) != dv]
+
+
 def flush_defaults_into_db() -> int:
     """首次启动时把 config.py 默认值灌进 DB（幂等）。返回新增条数。"""
     db = SessionLocal()

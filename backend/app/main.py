@@ -19,6 +19,24 @@ setup_logger()
 async def lifespan(app: FastAPI):
     # === 启动时 ===
     # 初始化定时任务 / 连接 Redis / 预热缓存 ...
+    try:
+        import logging
+        from app.database import SessionLocal
+        from app.services.ai_setting_service import check_prompt_drift
+        _log = logging.getLogger("app.main")
+        _db = SessionLocal()
+        try:
+            _drift = check_prompt_drift(_db)
+        finally:
+            _db.close()
+        if _drift:
+            _log.warning("[ai_setting] 以下 Prompt 的 DB 值与源码默认不一致（实际以 DB 为准，"
+                         "可在后台 /admin/ai/settings/{key}/reset 重置）：%s", ", ".join(_drift))
+        else:
+            _log.info("[ai_setting] Prompt 与源码默认一致")
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("app.main").warning("[ai_setting] 启动时 Prompt 漂移检测失败: %s", e)
     yield
     # === 关闭时 ===
 

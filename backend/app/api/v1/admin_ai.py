@@ -48,6 +48,29 @@ def list_settings(db: Session = Depends(get_db), _: SysUser = AdminRole):
     return ApiResponse.ok({"groups": grouped, "flat": rows})
 
 
+# ============= Prompt 漂移检测 + 重置为源码默认 =============
+
+@router.get("/prompt-drift", summary="检测 DB Prompt 与源码默认值的差异")
+def prompt_drift(db: Session = Depends(get_db), _: SysUser = AdminRole):
+    """返回与源码默认值不一致的 prompt.* key，便于发现「改了代码却没生效」。"""
+    drifted = svc.check_prompt_drift(db)
+    return ApiResponse.ok({"drifted": drifted, "count": len(drifted)})
+
+
+@router.post("/{key:path}/reset", summary="把某条 Prompt 重置为源码默认值")
+def reset_setting(key: str, db: Session = Depends(get_db),
+                  user: SysUser = Depends(get_current_user)):
+    """仅支持 prompt.*（有源码常量可对照的项）。重置前自动存快照，可回滚。"""
+    defaults = svc.code_prompt_defaults()
+    if key not in defaults:
+        raise HTTPException(400, f"{key} 没有可用的源码默认值（仅支持 prompt.*）")
+    try:
+        svc.update_one(db, key, defaults[key], user.id, user.username, remark="重置为源码默认")
+    except KeyError:
+        raise HTTPException(404, f"setting {key} 不存在")
+    return ApiResponse.ok({"key": key, "reset": True})
+
+
 # ============= 保存（单条） =============
 
 @router.put("/{key:path}", summary="保存某条设置（自动入快照 + 清缓存立即生效）")
