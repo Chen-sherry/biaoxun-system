@@ -813,6 +813,7 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                         logger.info("[crawl] AI 提取失败→待审核 title=%s",
                                     str(mapped.get("title"))[:40])
                     else:
+                        mapped["ai_processed"] = 1
                         for f in ("tenderee", "winner_unit", "win_amount"):
                             if ai_vals.get(f) is not None:
                                 mapped[f] = ai_vals[f]

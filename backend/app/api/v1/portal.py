@@ -24,6 +24,7 @@ def _bid_to_public_dict(b: BidInfo, db: Session) -> dict:
     return {
         "id": b.id,
         "title": b.title,
+        "ai_processed": bool(b.ai_processed),
         "project_code": b.project_code,
         "notice_type": db.query(DictNoticeType.name)
             .filter(DictNoticeType.id == b.notice_type_id).scalar() if b.notice_type_id else None,

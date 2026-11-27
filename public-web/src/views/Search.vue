@@ -50,7 +50,7 @@
       <div v-for="b in list" :key="b.id" class="result-item tech-card" @click="$router.push(`/bid/${b.id}`)">
         <div class="result-accent"></div>
         <div class="result-main">
-          <h3 class="result-title">{{ b.title }}</h3>
+          <h3 class="result-title"><span v-if="b.ai_processed" class="ai-pill">AI</span>{{ b.title }}</h3>
           <div class="result-meta">
             <el-tag v-if="b.notice_type" size="small" type="primary" effect="dark">{{ b.notice_type }}</el-tag>
             <span><el-icon><Calendar /></el-icon> {{ formatTime(b.publish_time) }}</span>

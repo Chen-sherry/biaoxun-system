@@ -3,7 +3,7 @@
     <div class="page-head">
       <el-page-header @back="$router.back()" :content="detail.title">
         <template #content>
-          <h1 class="title">{{ detail.title }}</h1>
+          <h1 class="title"><span v-if="detail.ai_processed" class="ai-pill">AI</span>{{ detail.title }}</h1>
           <div class="meta">
             <el-tag v-if="detail.notice_type" size="small" type="primary" effect="dark">{{ detail.notice_type }}</el-tag>
             <span><el-icon><Calendar /></el-icon> 发布：{{ formatTime(detail.publish_time) }}</span>

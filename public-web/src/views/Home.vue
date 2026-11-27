@@ -108,7 +108,9 @@
               <span class="bid-idx">#{{ String(b.id).slice(-4) }}</span>
               <span class="bid-arrow"><el-icon><Right /></el-icon></span>
             </div>
-            <div class="bid-title">{{ b.title }}</div>
+            <div class="bid-title">
+            <span v-if="b.ai_processed" class="ai-pill">AI</span>{{ b.title }}
+          </div>
             <div class="bid-meta">
               <el-tag v-if="b.notice_type" size="small" type="primary" effect="dark">{{ b.notice_type }}</el-tag>
               <span><el-icon><Calendar /></el-icon> {{ formatTime(b.publish_time) }}</span>

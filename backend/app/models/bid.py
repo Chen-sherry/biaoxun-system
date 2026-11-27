@@ -51,6 +51,8 @@ class BidInfo(TimestampMixin, Base):
     status = Column(Integer, nullable=False, default=1, comment="0 待审核 1 已发布 2 已下架 3 已归档")
     is_top = Column(Boolean, nullable=False, default=False, comment="是否置顶")
     remark = Column(Text, nullable=True, comment="内部备注")
+    ai_processed = Column(Integer, nullable=False, default=0,
+                          comment="双线提取：AI 兜底触发过=1，仅规则/无缺失=0")
 
     attachments = relationship("BidAttachment", back_populates="bid")
 
