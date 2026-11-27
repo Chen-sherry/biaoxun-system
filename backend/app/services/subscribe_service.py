@@ -208,11 +208,20 @@ def push_subscribe(db, sub: BidSubscribe, *, ignore_last_push: bool = False,
 
 
 def run_all_subscribe_pushes(db) -> dict:
-    """定时任务入口：遍历所有启用订阅，按频率到期的逐个推送。"""
+    """定时任务入口：遍历所有启用订阅，按频率到期的逐个推送。
+    仅对「有效会员」推送；会员过期即停推（未开会员不准用）。"""
     subs = db.query(BidSubscribe).filter(BidSubscribe.status == 1).all()
     now = datetime.now()
-    stats = {"checked": len(subs), "pushed_subs": 0, "sent": 0, "skipped": 0, "matched": 0}
+    stats = {"checked": len(subs), "pushed_subs": 0, "sent": 0,
+             "skipped": 0, "no_member": 0, "matched": 0}
+    member_cache = {}
     for sub in subs:
+        # 会员校验（同一用户只查一次）
+        if sub.user_id not in member_cache:
+            member_cache[sub.user_id] = get_active_package(db, sub.user_id) is not None
+        if not member_cache[sub.user_id]:
+            stats["no_member"] += 1
+            continue
         if not is_sub_due(sub, now):
             stats["skipped"] += 1
             continue

@@ -9,8 +9,22 @@
     <!-- 未登录 -->
     <div v-if="!isLoggedIn" class="tech-card login-hint">
       <el-icon :size="24" color="var(--ink-400)"><Lock /></el-icon>
-      <p>登录后管理您的订阅</p>
+      <p>登录后管理您的订阅（会员专属）</p>
       <el-button type="primary" plain @click="$router.push('/login?redirect=/subscribe')">立即登录</el-button>
+    </div>
+
+    <!-- 会员校验中 -->
+    <div v-else-if="!memberChecked" class="tech-card" style="padding: 40px; text-align: center;">
+      <el-icon class="is-loading" :size="22" color="var(--accent)"><Loading /></el-icon>
+      <p style="color: var(--ink-400); margin-top: 10px;">正在校验会员状态…</p>
+    </div>
+
+    <!-- 非会员：禁止使用 -->
+    <div v-else-if="!isMember" class="tech-card member-gate">
+      <el-icon :size="30" color="var(--accent-strong)"><Medal /></el-icon>
+      <h3>订阅推送为会员专属功能</h3>
+      <p>开通会员后即可创建专属订阅，命中标讯自动推送到邮箱</p>
+      <el-button type="primary" @click="$router.push('/member')">查看会员套餐</el-button>
     </div>
 
     <template v-else>
@@ -175,7 +189,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { Bell, Lock } from '@element-plus/icons-vue'
+import { Bell, Lock, Loading, Medal } from '@element-plus/icons-vue'
 import {
   fetchMySubscribes, createSubscribe, updateSubscribe, deleteSubscribe, pushSubscribeNow,
   fetchMyPushRecords, fetchMyMemberStatus, fetchMe, fetchPublicRegions, fetchPublicNoticeTypes,
@@ -187,6 +201,8 @@ const saving = ref(false)
 const pushingId = ref<number | null>(null)
 const subscribes = ref<any[]>([])
 const memberStatus = ref<any>({ max_subscribe: 3 })
+const isMember = ref(false)
+const memberChecked = ref(false)
 const userEmail = ref('')
 const regions = ref<any[]>([])
 const noticeTypes = ref<any[]>([])
@@ -240,7 +256,14 @@ async function loadMember() {
     const me = await fetchMe()
     userEmail.value = me?.email || ''
   } catch {}
-  try { memberStatus.value = await fetchMyMemberStatus() } catch {}
+  try {
+    memberStatus.value = await fetchMyMemberStatus()
+    isMember.value = !!memberStatus.value?.is_member
+  } catch {
+    isMember.value = false
+  } finally {
+    memberChecked.value = true
+  }
 }
 async function loadRecords() {
   recordsLoading.value = true
@@ -304,11 +327,12 @@ async function remove(row: any) {
   } catch { ElMessage.error('删除失败') }
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (!isLoggedIn.value) return
+  await loadMember()
+  if (!isMember.value) return   // 非会员不加载订阅数据
   loadDicts()
   loadSubscribes()
-  loadMember()
   loadRecords()
 })
 </script>
@@ -321,6 +345,9 @@ onMounted(() => {
 .sub-head p { color: var(--ink-500); font-size: 14px; }
 .login-hint { padding: 30px; text-align: center; }
 .login-hint p { color: var(--ink-500); margin: 10px 0 16px; }
+.member-gate { padding: 40px 30px; text-align: center; }
+.member-gate h3 { margin: 12px 0 8px; font-size: 18px; color: var(--ink-900); }
+.member-gate p { color: var(--ink-500); margin: 0 0 18px; font-size: 14px; }
 .overview { display: flex; align-items: center; gap: 28px; padding: 16px 20px; margin-bottom: 16px; flex-wrap: wrap; }
 .ov-item { display: flex; flex-direction: column; gap: 4px; }
 .ov-label { font-size: 12px; color: var(--ink-400); }

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.subscribe import BidSubscribe
 from app.models.user import SysUser
-from app.api.deps import get_current_user, get_current_user_optional, require_role
+from app.api.deps import get_current_user, get_current_user_optional, require_role, require_member
 from app.utils.response import ApiResponse, PageData
 
 router = APIRouter(prefix="/subscribes")
@@ -38,7 +38,7 @@ def _to_dict(s: BidSubscribe, username: Optional[str] = None) -> dict:
 @router.get("/mine", summary="我的订阅列表（登录用户）")
 def list_my_subscribes(
     db: Session = Depends(get_db),
-    user: SysUser = Depends(get_current_user),
+    user: SysUser = Depends(require_member(1)),
 ):
     items = (
         db.query(BidSubscribe)
@@ -64,7 +64,7 @@ class SubscribeIn(BaseModel):
 def create_subscribe(
     payload: SubscribeIn,
     db: Session = Depends(get_db),
-    user: SysUser = Depends(get_current_user),
+    user: SysUser = Depends(require_member(1)),
 ):
     from app.services.subscribe_service import (
         get_user_max_subscribe, count_active_subscribes,
@@ -102,7 +102,7 @@ def update_subscribe(
     subscribe_id: int,
     payload: dict,
     db: Session = Depends(get_db),
-    user: SysUser = Depends(get_current_user),
+    user: SysUser = Depends(require_member(1)),
 ):
     sub = db.query(BidSubscribe).filter(
         BidSubscribe.id == subscribe_id, BidSubscribe.user_id == user.id
@@ -123,7 +123,7 @@ def update_subscribe(
 def delete_subscribe(
     subscribe_id: int,
     db: Session = Depends(get_db),
-    user: SysUser = Depends(get_current_user),
+    user: SysUser = Depends(require_member(1)),
 ):
     sub = db.query(BidSubscribe).filter(
         BidSubscribe.id == subscribe_id, BidSubscribe.user_id == user.id
@@ -139,7 +139,7 @@ def delete_subscribe(
 def push_my_subscribe_now(
     subscribe_id: int,
     db: Session = Depends(get_db),
-    user: SysUser = Depends(get_current_user),
+    user: SysUser = Depends(require_member(1)),
 ):
     from app.services.subscribe_service import push_subscribe
 
@@ -165,7 +165,7 @@ def my_push_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    user: SysUser = Depends(get_current_user),
+    user: SysUser = Depends(require_member(1)),
 ):
     from app.models.push import PushRecord
 
