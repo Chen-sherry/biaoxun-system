@@ -217,3 +217,118 @@ async def prompt_try(payload: PromptTryIn, _: SysUser = AdminRole):
         app_settings.deepseek_api_key = orig_key
         app_settings.deepseek_base_url = orig_url
         app_settings.deepseek_model = orig_model
+
+
+# ================================================================ #
+#  AI 用量统计（成本评估）：日 / 周 / 月 + 30 天趋势 + 按功能拆分
+# ================================================================ #
+
+usage_router = APIRouter(prefix="/admin/ai", tags=["后台：AI 用量"])
+
+# DeepSeek 计费估算（元 / 百万 token）。仅用于后台展示，不影响实际计费。
+PRICE_INPUT_PER_M = 2.0
+PRICE_OUTPUT_PER_M = 3.0
+
+
+def _agg(db, start, end=None):
+    """聚合 [start, end) 区间的调用次数与 token 数。"""
+    from sqlalchemy import func
+    from app.models.ai_usage import AIUsageLog
+    q = db.query(
+        func.count(AIUsageLog.id),
+        func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
+        func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
+    ).filter(AIUsageLog.created_at >= start)
+    if end is not None:
+        q = q.filter(AIUsageLog.created_at < end)
+    calls, pt, ct = q.one()
+    pt, ct = int(pt or 0), int(ct or 0)
+    return {
+        "calls": int(calls or 0),
+        "prompt_tokens": pt,
+        "completion_tokens": ct,
+        "total_tokens": pt + ct,
+        "est_cost": round(pt / 1e6 * PRICE_INPUT_PER_M + ct / 1e6 * PRICE_OUTPUT_PER_M, 4),
+    }
+
+
+def _period_starts():
+    from datetime import date, datetime, timedelta
+    now = datetime.now()
+    today0 = datetime(now.year, now.month, now.day)
+    week0 = today0 - timedelta(days=today0.weekday())      # 周一 00:00
+    month0 = datetime(now.year, now.month, 1)              # 本月 1 日 00:00
+    return today0, week0, month0, now
+
+
+@usage_router.get("/usage", summary="AI 用量统计（今日/本周/本月 + 30 天趋势 + 按功能）")
+def ai_usage_stats(db: Session = Depends(get_db), _: SysUser = AdminRole):
+    from sqlalchemy import func
+    from app.models.ai_usage import AIUsageLog
+
+    today0, week0, month0, now = _period_starts()
+
+    summary = {
+        "today": _agg(db, today0),
+        "week": _agg(db, week0),
+        "month": _agg(db, month0),
+    }
+
+    # 近 30 天逐日
+    from datetime import timedelta
+    start30 = (today0 - timedelta(days=29))
+    rows = (
+        db.query(
+            func.date(AIUsageLog.created_at).label("d"),
+            func.count(AIUsageLog.id),
+            func.coalesce(func.sum(AIUsageLog.total_tokens), 0),
+        )
+        .filter(AIUsageLog.created_at >= start30)
+        .group_by(func.date(AIUsageLog.created_at))
+        .all()
+    )
+    by_day = {str(r[0]): {"calls": int(r[1] or 0), "total_tokens": int(r[2] or 0)}
+              for r in rows}
+    series = []
+    for i in range(30):
+        d = (start30 + timedelta(days=i)).date()
+        v = by_day.get(str(d), {"calls": 0, "total_tokens": 0})
+        series.append({"date": d.strftime("%m-%d"), **v})
+
+    # 本月按功能拆分
+    tag_rows = (
+        db.query(
+            AIUsageLog.tag,
+            func.count(AIUsageLog.id),
+            func.coalesce(func.sum(AIUsageLog.prompt_tokens), 0),
+            func.coalesce(func.sum(AIUsageLog.completion_tokens), 0),
+        )
+        .filter(AIUsageLog.created_at >= month0)
+        .group_by(AIUsageLog.tag)
+        .all()
+    )
+    by_tag = []
+    for tag, calls, pt, ct in tag_rows:
+        pt, ct = int(pt or 0), int(ct or 0)
+        by_tag.append({
+            "tag": tag or "unknown",
+            "calls": int(calls or 0),
+            "prompt_tokens": pt,
+            "completion_tokens": ct,
+            "total_tokens": pt + ct,
+            "est_cost": round(pt / 1e6 * PRICE_INPUT_PER_M + ct / 1e6 * PRICE_OUTPUT_PER_M, 4),
+        })
+    by_tag.sort(key=lambda x: x["total_tokens"], reverse=True)
+
+    return ApiResponse.ok({
+        "summary": summary,
+        "series_30d": series,
+        "by_tag": by_tag,
+        "by_tag_scope": "month",
+        "pricing": {
+            "input_per_m": PRICE_INPUT_PER_M,
+            "output_per_m": PRICE_OUTPUT_PER_M,
+            "currency": "CNY",
+        },
+        "server_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+    })

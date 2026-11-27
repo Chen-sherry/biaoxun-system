@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Dict, List, Optional, Tuple
 
 import httpx
@@ -243,12 +244,20 @@ def ai_extract_missing(title: str, content_text: str,
     raw_json: Optional[Dict] = None
     for attempt in range(_AI_MAX_RETRIES + 1):
         try:
+            t0 = time.monotonic()
             r = httpx.post(url, json=payload, headers=headers,
                            timeout=AI_TIMEOUT)
+            latency_ms = int((time.monotonic() - t0) * 1000)
             r.raise_for_status()
             data = r.json()
             content = (data.get("choices") or [{}])[0] \
                 .get("message", {}).get("content")
+            try:
+                from app.services.llm import record_usage
+                record_usage("extract", payload.get("model") or "",
+                             data.get("usage") or {}, latency_ms)
+            except Exception:  # noqa: BLE001
+                pass
             raw_json = _parse_json(content)
             break
         except Exception as e:

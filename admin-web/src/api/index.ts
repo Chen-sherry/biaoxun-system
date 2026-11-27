@@ -192,3 +192,7 @@ export function tryAIPrompt(payload: { setting_key: string; input_text: string }
   return request.post('/api/v1/admin/ai/settings/prompt/try', payload,
     { timeout: 60000 })
 }
+// AI 用量统计（日/周/月 + 30 天趋势 + 按功能拆分）
+export function fetchAIUsage() {
+  return request.get('/api/v1/admin/ai/usage')
+}

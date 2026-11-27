@@ -50,18 +50,59 @@
         </div>
       </el-col>
     </el-row>
+
+    <!-- AI 用量与成本 -->
+    <el-row :gutter="16" style="margin-top: 18px">
+      <el-col :span="24">
+        <div class="panel-card">
+          <div class="panel-head">
+            <div><el-icon><Coin /></el-icon><h3>AI 用量与成本</h3></div>
+            <span class="panel-tag">TOKENS · 30D</span>
+          </div>
+
+          <div class="usage-stats">
+            <div class="usage-item" v-for="p in usagePeriods" :key="p.key" :style="{ '--c': p.color }">
+              <div class="usage-label">{{ p.label }}</div>
+              <div class="usage-value">{{ fmtNum(p.tokens) }}<small> tokens</small></div>
+              <div class="usage-sub">{{ p.calls }} 次调用 · 约 ¥{{ p.cost.toFixed(2) }}</div>
+              <div class="usage-line"></div>
+            </div>
+          </div>
+
+          <div class="usage-body">
+            <div ref="usageChartRef" class="usage-chart"></div>
+            <div class="usage-tags">
+              <div class="tags-title">本月按功能<span class="tags-scope">（按 token 排序）</span></div>
+              <div class="tag-row" v-for="t in usageTags" :key="t.tag">
+                <span class="tag-name">{{ tagLabel(t.tag) }}</span>
+                <div class="tag-bar"><i :style="{ width: t.pct + '%' }"></i></div>
+                <span class="tag-num">{{ fmtNum(t.total_tokens) }}</span>
+                <span class="tag-cost">¥{{ t.est_cost.toFixed(2) }}</span>
+              </div>
+              <el-empty v-if="!usageTags.length" description="本月还没有 AI 调用" :image-size="50" />
+            </div>
+          </div>
+
+          <div class="usage-foot">
+            按 DeepSeek 价目估算：输入 ¥{{ pricing.input_per_m }}/M · 输出 ¥{{ pricing.output_per_m }}/M，仅统计接通统一 LLM 层的调用
+          </div>
+        </div>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import * as echarts from 'echarts'
-import { Tickets, TrendCharts, Warning, Connection, Top, Clock } from '@element-plus/icons-vue'
-import { fetchStatsOverview } from '@/api'
+import { Tickets, TrendCharts, Warning, Connection, Top, Clock, Coin } from '@element-plus/icons-vue'
+import { fetchStatsOverview, fetchAIUsage } from '@/api'
 
 const chartRef = ref<HTMLElement | null>(null)
+const usageChartRef = ref<HTMLElement | null>(null)
 const loading = ref(false)
 const overview = ref<any>(null)
+const usage = ref<any>(null)
 const today = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 
 const cards = computed(() => {
@@ -75,6 +116,99 @@ const cards = computed(() => {
 })
 
 const latestPending = computed(() => overview.value?.latest_pending || [])
+
+// ---------- AI 用量 ----------
+const TAG_LABELS: Record<string, string> = {
+  chat: '悬浮球对话',
+  stream: '悬浮球对话(流式)',
+  translate: '检索·转译',
+  score: '检索·打分',
+  push: '推送文案',
+  extract: '字段补提取',
+  match: '智能匹配(已停用)',
+  admin_prompt_try: '后台试运行',
+}
+
+const pricing = computed(() => usage.value?.pricing || { input_per_m: 2, output_per_m: 3 })
+
+const usagePeriods = computed(() => {
+  const s = usage.value?.summary || {}
+  return [
+    { key: 'today', label: '今日', color: '#0ea5e9', ...pick(s.today) },
+    { key: 'week', label: '本周（周一起）', color: '#10b981', ...pick(s.week) },
+    { key: 'month', label: '本月', color: '#818cf8', ...pick(s.month) },
+  ]
+})
+
+function pick(p: any) {
+  return { tokens: p?.total_tokens ?? 0, calls: p?.calls ?? 0, cost: p?.est_cost ?? 0 }
+}
+
+const usageTags = computed(() => {
+  const list = usage.value?.by_tag || []
+  const max = list.length ? (list[0].total_tokens || 1) : 1
+  const top = list.slice(0, 6)
+  return top.map((t: any) => ({ ...t, pct: Math.max(2, Math.round(t.total_tokens / max * 100)) }))
+})
+
+const tagLabel = (t: string) => TAG_LABELS[t] || t
+
+function fmtNum(n: number) {
+  if (n == null) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
+}
+
+function renderUsageChart(series: any[]) {
+  if (!usageChartRef.value || !series?.length) return
+  const chart = echarts.init(usageChartRef.value)
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#0d1e38',
+      borderColor: 'rgba(56,189,248,0.35)',
+      textStyle: { color: '#e8f2ff' },
+      formatter: (ps: any[]) => {
+        const p = ps[0]
+        const row = series[p.dataIndex] || {}
+        return `${p.axisValue}<br/>tokens：<b>${(row.total_tokens || 0).toLocaleString()}</b><br/>调用：${row.calls || 0} 次`
+      },
+    },
+    grid: { left: 12, right: 16, top: 20, bottom: 8, containLabel: true },
+    xAxis: {
+      type: 'category', data: series.map((t: any) => t.date),
+      axisLine: { lineStyle: { color: '#dbe6f2' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#64748b', fontSize: 11, interval: 4 },
+    },
+    yAxis: {
+      type: 'value', minInterval: 1,
+      axisLine: { show: false }, axisTick: { show: false },
+      axisLabel: { color: '#64748b', fontSize: 11 },
+      splitLine: { lineStyle: { color: '#eef4fb' } },
+    },
+    series: [{
+      name: 'tokens', type: 'line', smooth: true, symbolSize: 5,
+      lineStyle: { width: 2, color: '#38bdf8' },
+      itemStyle: { color: '#0ea5e9' },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: 'rgba(56,189,248,0.28)' },
+          { offset: 1, color: 'rgba(56,189,248,0.02)' },
+        ]),
+      },
+      data: series.map((t: any) => t.total_tokens),
+    }],
+  })
+}
+
+async function loadUsage() {
+  try {
+    usage.value = await fetchAIUsage()
+    renderUsageChart(usage.value?.series_30d || [])
+  } catch { /* 统计失败不影响总览 */ }
+}
 
 function renderChart(trend: any[]) {
   if (!chartRef.value || !trend?.length) return
@@ -124,7 +258,10 @@ async function loadStats() {
   } finally { loading.value = false }
 }
 
-onMounted(loadStats)
+onMounted(() => {
+  loadStats()
+  loadUsage()
+})
 </script>
 
 <style scoped>
@@ -173,7 +310,37 @@ onMounted(loadStats)
 .panel-tag.warn { color: #d97706; background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.25); }
 .chart { height: 300px; width: 100%; }
 
+/* ===== AI 用量卡片 ===== */
+.usage-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+.usage-item {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 12px;
+  background: color-mix(in srgb, var(--c) 4%, var(--surface));
+}
+.usage-label { font-size: 12.5px; color: var(--ink-500); font-weight: 600; }
+.usage-value { font-size: 24px; font-weight: 800; color: var(--ink-900); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.usage-value small { font-size: 12px; font-weight: 600; color: var(--ink-400); }
+.usage-sub { font-size: 12px; color: var(--ink-400); margin-top: 4px; }
+.usage-line { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: linear-gradient(90deg, var(--c), transparent); opacity: .7; }
+
+.usage-body { display: grid; grid-template-columns: 1fr 340px; gap: 22px; align-items: stretch; }
+.usage-chart { height: 220px; width: 100%; }
+.usage-tags { border-left: 1px dashed var(--line); padding-left: 18px; }
+.tags-title { font-size: 13px; font-weight: 700; color: var(--ink-700); margin-bottom: 12px; }
+.tags-scope { font-weight: 400; font-size: 11.5px; color: var(--ink-400); }
+.tag-row { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; font-size: 12.5px; }
+.tag-name { width: 96px; flex-shrink: 0; color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-bar { flex: 1; height: 7px; border-radius: 999px; background: #eef4fb; overflow: hidden; }
+.tag-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #38bdf8, #6366f1); }
+.tag-num { width: 58px; text-align: right; color: var(--ink-700); font-variant-numeric: tabular-nums; }
+.tag-cost { width: 52px; text-align: right; color: var(--ink-400); font-variant-numeric: tabular-nums; }
+.usage-foot { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); font-size: 11.5px; color: var(--ink-400); }
+
 @media (max-width: 1200px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) {
+  .usage-body { grid-template-columns: 1fr; }
+  .usage-tags { border-left: none; padding-left: 0; border-top: 1px dashed var(--line); padding-top: 14px; }
+}
 @media (max-width: 768px) {
   .dashboard { padding: 14px 12px; }
   .dash-head h1 { font-size: 21px; }
@@ -181,5 +348,7 @@ onMounted(loadStats)
   .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .value { font-size: 24px; }
   .chart { height: 260px; }
+  .usage-stats { grid-template-columns: 1fr; }
+  .usage-chart { height: 180px; }
 }
 </style>

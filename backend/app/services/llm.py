@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -53,6 +54,39 @@ class LLMResult:
 
 # 可重试的 HTTP 状态码
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def record_usage(tag: str, model: str, usage: dict, latency_ms: int = 0) -> None:
+    """把一次调用的 token 用量异步落库（ai_usage_log），失败静默不影响主流程。"""
+    if not usage:
+        return
+    try:
+        pt = int(usage.get("prompt_tokens") or 0)
+        ct = int(usage.get("completion_tokens") or 0)
+    except (TypeError, ValueError):
+        return
+    if not (pt or ct):
+        return
+
+    def _write() -> None:
+        try:
+            from app.database import SessionLocal
+            from app.models.ai_usage import AIUsageLog
+            db = SessionLocal()
+            try:
+                db.add(AIUsageLog(
+                    tag=(tag or "")[:32], model=(model or "")[:64],
+                    prompt_tokens=pt, completion_tokens=ct,
+                    total_tokens=pt + ct, latency_ms=int(latency_ms or 0),
+                ))
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[llm] 用量落库失败: %s", e)
+
+    threading.Thread(target=_write, daemon=True).start()
+
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
 _OBJ_RE = re.compile(r"\{.*\}", re.S)
@@ -148,6 +182,8 @@ async def achat(
             logger.info("[llm] tag=%s in=%s out=%s ms=%d",
                         tag, usage.get("prompt_tokens", "?"),
                         usage.get("completion_tokens", "?"), latency_ms)
+            record_usage(tag, data.get("model") or model_override or "",
+                         usage, latency_ms)
             return LLMResult(
                 content=content,
                 tool_calls=tool_calls,
@@ -343,6 +379,7 @@ async def achat_stream(
 
                         # usage 独立块
                         if data.get("usage") and not data.get("choices"):
+                            record_usage(tag, model_override or "", data["usage"])
                             yield ("usage", data["usage"])
                             continue
 
