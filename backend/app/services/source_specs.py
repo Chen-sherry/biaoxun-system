@@ -168,7 +168,8 @@ def _table_column_amount(html: str, keys: tuple) -> Optional[float]:
     """表格列定位取金额：「成交价（万元）」表头 → 取数据行同列数值
 
     适配土地挂牌/成交公示表：表头行有「成交价(万元)」，数值在后续行的同列。
-    列的先后顺序和行列数各站不一，用表头文本定位列号最可靠。
+    严格校验：表头单元格必须**只有**字段名（≤18 字），数值单元格必须是纯数字，
+    避免正文里「…调整中标价的理由…」这类长句被当成表头（曾误出 ¥10,000）。
     """
     if not html:
         return None
@@ -176,19 +177,21 @@ def _table_column_amount(html: str, keys: tuple) -> Optional[float]:
         soup = BeautifulSoup(html, "html.parser")
     except Exception:
         return None
+    header_re = re.compile(
+        r"^\s*(?:成交|中标|出让|竞得|挂牌)(?:价|金额|总价)"
+        r"(?:\s*[（(]\s*(?:亿元|万元)\s*[）)])?\s*$")
+    value_re = re.compile(
+        r"^\s*[¥￥]?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(亿元|万元|元)?\s*$")
     for table in soup.find_all("table"):
         rows = table.find_all("tr")
         for ri, tr in enumerate(rows):
             cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
             for ci, ctext in enumerate(cells):
+                if not header_re.match(ctext or ""):
+                    continue
                 if not any(k in ctext for k in keys):
                     continue
-                unit = "元"
-                if "万元" in ctext:
-                    unit = "万元"
-                elif "亿元" in ctext:
-                    unit = "亿元"
-                # 数值在同一表头行的相邻单元格，或后续数据行的同列
+                unit = "万元" if "万元" in ctext else ("亿元" if "亿元" in ctext else "元")
                 cand_cells = []
                 if ci + 1 < len(cells):
                     cand_cells.append(cells[ci + 1])
@@ -197,16 +200,18 @@ def _table_column_amount(html: str, keys: tuple) -> Optional[float]:
                     if ci < len(c2):
                         cand_cells.append(c2[ci])
                 for cv in cand_cells:
-                    m = re.search(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)", cv or "")
-                    if m:
-                        v = float(m.group(1).replace(",", ""))
-                        if v <= 0:
-                            continue
-                        if unit == "万元":
-                            v *= 1e4
-                        elif unit == "亿元":
-                            v *= 1e8
-                        return v
+                    m = value_re.match(cv or "")
+                    if not m:
+                        continue
+                    v = float(m.group(1).replace(",", ""))
+                    if v <= 0:
+                        continue
+                    u = m.group(2) or unit
+                    if u == "万元":
+                        v *= 1e4
+                    elif u == "亿元":
+                        v *= 1e8
+                    return v
     return None
 
 
@@ -480,16 +485,20 @@ def extract_via_spec(source_code: str, content_html: str, raw: dict) -> dict:
         return {}
 
 
-def fill_gaps_via_spec(source_code: str, content_html: str, current: dict) -> dict:
+def fill_gaps_via_spec(source_code: str, content_html: str, current: dict,
+                       allow_winner: bool = True) -> dict:
     """专用 extractor 只填空字段，不覆盖已有的
 
     current = {"tenderee": None, "winner_unit": "XX已抓到", ...}
     返回的 dict 里只会含 current 中为 None/空/0 的字段
+    allow_winner=False（招标/采购等非结果类公告）时丢弃中标单位/中标金额
     """
     fields = extract_via_spec(source_code, content_html, current)
     out: dict = {}
     for f, v in fields.items():
         if v is None:
+            continue
+        if not allow_winner and f in ("winner_unit", "win_amount"):
             continue
         cur = current.get(f)
         # 已有的值不覆盖：None / "" / 0 / 空字符串 才算空

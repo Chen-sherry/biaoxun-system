@@ -762,6 +762,7 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                                 # 源站专用 extractor 补漏（同入库路径）
                                 try:
                                     from app.services.source_specs import fill_gaps_via_spec
+                                    from app.services.data_clean import is_result_notice
                                     spec_fields = fill_gaps_via_spec(
                                         code,
                                         row.content or row.content_text or "",
@@ -772,7 +773,9 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                                          "winner_unit": row.winner_unit,
                                          "win_amount": row.win_amount,
                                          "project_code": row.project_code,
-                                         "region_code": row.region_code})
+                                         "region_code": row.region_code},
+                                        allow_winner=is_result_notice(
+                                            row.title or "", row.content_text or ""))
                                     for k, v in spec_fields.items():
                                         setattr(row, k, v)
                                 except Exception:
@@ -816,6 +819,7 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
             # 优先级：源站专用 > 通用规则 > AI 兜底
             try:
                 from app.services.source_specs import fill_gaps_via_spec
+                from app.services.data_clean import is_result_notice
                 current_for_spec = {
                     "tenderee": mapped.get("tenderee"),
                     "agency": mapped.get("agency"),
@@ -829,7 +833,9 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                 spec_fields = fill_gaps_via_spec(
                     code,
                     mapped.get("content") or mapped.get("content_text") or "",
-                    current_for_spec)
+                    current_for_spec,
+                    allow_winner=is_result_notice(
+                        mapped.get("title") or "", mapped.get("content_text") or ""))
                 if spec_fields:
                     mapped.update(spec_fields)
                     logger.info("[crawl] SourceSpec(%s) 补到字段: %s", code, list(spec_fields.keys()))

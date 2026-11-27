@@ -581,6 +581,30 @@ _WINNER_AMOUNT_HEADER_UNIT_RE = re.compile(
 
 _WINNER_UNIT_BAD = ("未开标", "详见", "无", "待定", "废标", "流标", "否决")
 
+# 公告语义门禁（2026-11-27）：中标金额/中标单位只属于「结果类」公告。
+# 招标公告里「中标人需配合…调整中标价的理由」这类模板句会被误抓，
+# 表现为招标公告挂着 ¥10,000 的假中标金额。
+_RESULT_TITLE_RE = re.compile(r"中标|成交|结果|候选人|合同公告|竞得")
+_NON_RESULT_TITLE_RE = re.compile(
+    r"招标公告|采购公告|询价|竞争性磋商|竞争性谈判|更正|澄清|答疑|终止|"
+    r"流标|废标|采购意向|资格预审|邀请招标|单一来源")
+_RESULT_BODY_RE = re.compile(
+    r"(中标|成交)(人|供应商|单位|结果)[：:]|中标结果|成交结果|"
+    r"中标候选人|成交候选人|竞得人[：:]|受让单位|受让人[：:]")
+
+
+def is_result_notice(title: str, text: str = "") -> bool:
+    """判断是否结果类公告（可含中标/成交字段）
+
+    标题命中结果词 → True；标题命中招标类词 → False；否则看正文前 2000 字。
+    """
+    t = title or ""
+    if _NON_RESULT_TITLE_RE.search(t):
+        return False
+    if _RESULT_TITLE_RE.search(t):
+        return True
+    return bool(_RESULT_BODY_RE.search((text or "")[:2000]))
+
 # 成交金额下限：低于此值基本都是标书费/工本费误抓
 _MIN_WIN_AMOUNT = 1000
 
@@ -866,8 +890,9 @@ def extract_fields_from_text(title: str, text: str, conn=None,
         bg = extract_budget(flat)
         if bg:
             out["budget"] = bg
-    # 结果类字段：中标单位/中标金额（中标公告正文里有，原管线一直没提）
-    if not cur.get("winner_unit") or not cur.get("win_amount"):
+    # 结果类字段：中标单位/中标金额（只属于结果类公告；招标公告不提取）
+    if (not cur.get("winner_unit") or not cur.get("win_amount")) \
+            and is_result_notice(title, text):
         win = extract_winner(flat)
         if not cur.get("winner_unit") and win.get("winner_unit"):
             out["winner_unit"] = win["winner_unit"]
