@@ -34,3 +34,4 @@ celerybeat.pid
 .DS_Store
 *.swp
 *.suo
+*.xlsx
