@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-"""AI 检索接口"""
+"""AI 检索 + 悬浮球对话接口"""
+import json as _json
+from typing import List, Dict, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.api.deps import require_member
@@ -29,3 +33,29 @@ def search(
         raise HTTPException(status_code=400, detail="检索内容不能为空")
     result = ai_search(req.query.strip(), limit=max(1, min(req.limit, 120)))
     return ApiResponse.ok(result)
+
+
+# ============ AI 悬浮球对话（流式 SSE） ============
+
+class AIChatStreamIn(BaseModel):
+    messages: List[Dict[str, str]]
+    inject_context: Optional[bool] = True
+
+
+@router.post("/chat/stream", summary="AI 悬浮球流式对话（SSE）")
+async def chat_stream(
+    req: AIChatStreamIn,
+    user: SysUser = Depends(require_member(min_level=2)),
+):
+    """流式 SSE 对话，yield 事件：status / delta / results / done / error"""
+    from app.services.ai_chat import ai_chat_stream
+
+    async def event_generator():
+        async for event in ai_chat_stream(req.messages, inject_context=req.inject_context):
+            yield f"data: {_json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
