@@ -309,7 +309,7 @@ onMounted(async () => {
                   <el-tag size="small" :type="item.score >= 75 ? 'success' : item.score >= 60 ? 'info' : 'warning'" effect="dark">
                     {{ item.score >= 75 ? '高相关' : item.score >= 60 ? '辅助推荐' : '兜底参考' }}
                   </el-tag>
-                  <span class="reason-text">{{ item.reason }}</span>
+                  <span v-if="item.reason" class="reason-text">{{ item.reason }}</span>
                 </div>
                 <div v-if="item.snippet" class="result-snippet">{{ item.snippet.slice(0, 160) }}</div>
                 <div class="result-meta-line">
