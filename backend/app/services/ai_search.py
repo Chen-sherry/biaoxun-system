@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 HIGH_SCORE = 70        # >= 此分：高度相关
 MID_SCORE = 60         # 60~69：较相关，辅助展示；<60 丢弃
+# 相关性四维权重（总分 100）：主题40 / 地区25 / 类型20 / 时间15
+W_TOPIC, W_REGION, W_TYPE, W_TIME = 40, 25, 20, 15
 CANDIDATE_LIMIT = 200  # 召回池上限（DB 粗筛）—— 扩大召回范围
 SCORE_CAP = 100        # 默认送 LLM 打分的候选上限 —— 扩大 LLM 打分范围
 MIN_CANDIDATES = 40    # 单层召回不足此数则继续放宽并累积合并（避免首层非空即停导致召回过少）
@@ -469,26 +471,15 @@ def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
 #  4. DeepSeek 语义打分（分批并行，单批失败只降级该批）
 # ---------------------------------------------------------------- #
 
-SCORE_PROMPT = """你是标讯相关性评分员。请按四个维度加权评分，满分 100。
+SCORE_PROMPT = """你是标讯相关性评分员。对每条候选公告，分别给出四个维度的吻合度（0~100 的整数），不要自己加权求和，只给分维度。
 
-维度与权重：
-1. 主题吻合（40 分）：公告标题、采购内容与用户检索主体的匹配程度。
-   完全吻合 40；高度相关 32~38；部分相关 18~30；弱相关 5~15；无关 0。
-2. 地区吻合（25 分）：用户未提及地区 → 给满分 25（不扣）；
-   提及则：完全匹配 25；同一大区/相邻地区 15；明显不符 0。
-3. 公告类型（20 分）：用户未提及类型 → 给满分 20（不扣）；
-   提及则：类型一致 20；类型相近 10；不符 0。
-4. 时间吻合（15 分）：用户未提及时间 → 给满分 15（不扣）；
-   提及则：落在时间段 15；略有偏差 8；明显不符 0。
+维度定义（100=完全吻合，0=完全不相关）：
+- topic（主题吻合度）：公告标题、采购内容与用户检索主体的匹配程度。完全吻合 95~100；高度相关 75~94；部分相关 45~74；弱相关 10~44；无关 0。
+- region（地区吻合度）：公告地区与用户要求地区的吻合度。完全一致 100；同省或相邻 85；同大区 60；不同大区 0。用户未提地区时给 0 即可（系统会忽略此维度）。
+- type（公告类型吻合度）：公告类型与用户要求类型的吻合度。一致 100；相近 60；不符 0。用户未提类型时给 0 即可（系统会忽略）。
+- time（时间吻合度）：发布日期与用户要求时间段的吻合度。在区间内 100；略有超出 70；明显超出 0。用户未提时间时给 0 即可（系统会忽略）。
 
-总分 = 四项相加，不要额外加减。
-
-硬性约束：
-- 主题完全无关（主题分 = 0）时，总分一律不得超过 25，避免无关公告混入。
-- 用户明确指定了地区、而公告地区明显不符时，总分不得超过 60。
-- 70 分及以上为高相关，60~69 为辅助参考。
-
-只输出 JSON：{"results":[{"id":1,"score":85}]}"""
+只输出 JSON：{"results":[{"id":1,"topic":92,"region":100,"type":90,"time":100}]}"""
 
 
 def _lib_date_note() -> Tuple[str, str]:
@@ -548,9 +539,40 @@ def _cond_note(cond: Optional[Dict[str, Any]]) -> str:
     return "\n用户限定条件（只对这些维度扣分）：" + "；".join(parts)
 
 
+def _compose_score(s: Dict[str, Any], cond: Optional[Dict[str, Any]]) -> int:
+    """把 LLM 返回的四维吻合度按权重合成总分（代码确定性加权，避免模型自求和出错）。
+    用户未限定的维度直接计满分权重；主题无关/地区不符时按硬规则压分。"""
+    if s.get("score") is not None and s.get("topic") is None:
+        return _to_score(s.get("score"))   # 兼容旧格式（直接给了总分）
+
+    def _v(k: str) -> int:
+        try:
+            return max(0, min(100, int(float(s.get(k, 0)))))
+        except (TypeError, ValueError):
+            return 0
+
+    topic = _v("topic")
+    total = topic / 100 * W_TOPIC
+
+    has_region = bool(cond and (cond.get("region_code") or cond.get("region_name")))
+    has_type = bool(cond and cond.get("notice_type"))
+    has_time = bool(cond and (cond.get("date_from") or cond.get("date_to")))
+
+    total += (_v("region") / 100 * W_REGION) if has_region else W_REGION
+    total += (_v("type") / 100 * W_TYPE) if has_type else W_TYPE
+    total += (_v("time") / 100 * W_TIME) if has_time else W_TIME
+    total = int(round(total))
+
+    if topic == 0:
+        total = min(total, 25)
+    if has_region and _v("region") == 0:
+        total = min(total, 60)
+    return max(0, min(100, total))
+
+
 def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
-                 cond_note: str = "") -> List[Dict[str, Any]]:
-    """对一个批次（SCORING_CHUNK 条）调用 LLM 打分；失败抛异常由调用方按批降级。"""
+                 cond_note: str = "", cond: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """对一个批次（SCORING_CHUNK 条）调用 LLM 打四维分；失败抛异常由调用方按批降级。"""
     from app.services.llm import chat_json
     model_cfg = svc.get_model("search")
     prompt = svc.get_prompt("prompt.search_score", SCORE_PROMPT)
@@ -583,7 +605,7 @@ def _score_batch(query: str, batch: List[Dict[str, Any]], date_note: str,
     out = []
     for c in batch:
         s = by_id.get(c["id"], {})
-        out.append({**c, "score": _to_score(s.get("score", 0)),
+        out.append({**c, "score": _compose_score(s, cond),
                     "reason": (s.get("reason") or "")[:120]})
     return out
 
@@ -618,7 +640,7 @@ def score_candidates(query: str, candidates: List[Dict[str, Any]],
     batch_failures = 0
 
     with ThreadPoolExecutor(max_workers=SCORE_WORKERS) as ex:
-        futs = {ex.submit(_score_batch, query, b, date_note, cond_note): i
+        futs = {ex.submit(_score_batch, query, b, date_note, cond_note, cond): i
                 for i, b in enumerate(batches)}
         for fut in as_completed(futs):
             i = futs[fut]
