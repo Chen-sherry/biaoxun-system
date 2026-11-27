@@ -104,12 +104,14 @@ async function saveScene(k: string) {
     return
   }
   try {
-    await saveAISetting(k, {
-      value: JSON.stringify({
-        provider: s.provider, base_url: s.base_url,
-        api_key: s.api_key, model: s.model,
-      }, null, 2),
-    })
+    // 脱敏值（含 *）或空 → 让后端保留 DB 原值，不传 api_key
+    const isRedacted = s.api_key && s.api_key.includes('*')
+    const finalKey = (!s.api_key || isRedacted) ? null : s.api_key
+    const payload: any = {
+      provider: s.provider, base_url: s.base_url, model: s.model,
+    }
+    if (finalKey !== null) payload.api_key = finalKey
+    await saveAISetting(k, { value: JSON.stringify(payload, null, 2) })
     ElMessage.success('已保存（立即生效）')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '保存失败')
@@ -212,13 +214,18 @@ onMounted(load)
 
             <el-form-item label="API Key">
               <el-input v-model="scenes[s.key].api_key" type="password" show-password
-                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx" style="width: 420px" />
-              <div v-if="!scenes[s.key].api_key" class="warn-hint">
-                🔴 当前页面未配置 → 系统自动走服务器 <code>backend/.env</code> 里的默认 <code>DEEPSEEK_API_KEY</code>（正在生效，余额在扣）。
-                在这里填新 key 并保存 → 覆盖旧 key，立即生效。
-              </div>
-              <div v-else class="ok-hint">
-                ✅ 已在本页面配置，保存后会覆盖服务器 .env 默认值
+                :placeholder="scenes[s.key].api_key ? '留空 = 保留原 key' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'"
+                style="width: 420px" />
+              <div class="form-hint">
+                <template v-if="scenes[s.key].api_key && scenes[s.key].api_key.includes('*')">
+                  🔒 已在后台配置，显示为脱敏值。想换 key → 直接粘贴新 key 点保存；留空 = 不改
+                </template>
+                <template v-else-if="scenes[s.key].api_key">
+                  ⚠️ 当前输入框里是明文 key，保存后会存数据库（建议改完立即保存）
+                </template>
+                <template v-else>
+                  还没配 key → 粘贴新 key 点保存，立即生效
+                </template>
               </div>
             </el-form-item>
 

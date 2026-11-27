@@ -181,13 +181,31 @@ def flush_defaults_into_db() -> int:
 
 # ============ 给 admin 用的 CRUD ============
 
+def _redact_value(key: str, raw_value: Optional[str]) -> Optional[str]:
+    """给 admin 列表接口脱敏——model.* 的 api_key 只显示前 4 + 后 4。"""
+    if not raw_value or not key.startswith("model."):
+        return raw_value
+    try:
+        j = json.loads(raw_value)
+    except Exception:
+        return raw_value
+    if isinstance(j, dict) and j.get("api_key"):
+        k = str(j["api_key"])
+        if len(k) > 10:
+            j["api_key"] = k[:4] + "*" * max(0, len(k) - 8) + k[-4:]
+        else:
+            j["api_key"] = "*" * len(k)
+        return json.dumps(j, ensure_ascii=False)
+    return raw_value
+
+
 def list_all(db) -> List[Dict[str, Any]]:
     rows = db.query(AISetting).order_by(AISetting.id.asc()).all()
     return [
         {
             "id": r.id,
             "key": r.setting_key,
-            "value": r.value,
+            "value": _redact_value(r.setting_key, r.value),
             "value_type": r.value_type,
             "remark": r.remark,
             "idx_set": r.idx_set,
@@ -204,6 +222,21 @@ def update_one(db, key: str, new_value: Optional[str], operator_id: Optional[int
     if not row:
         from app.models.ai_setting import AISettingSnapshot
         raise KeyError(f"setting {key} 不存在")
+
+    # 前端如果传的是脱敏值（含 ****）或 api_key 空字符串且 DB 原来有 key，
+    # 说明用户没改 api_key → 保留 DB 原值，只更新其他字段
+    if key.startswith("model.") and new_value:
+        try:
+            new_j = json.loads(new_value)
+            old_j = json.loads(row.value or "{}")
+            new_k = new_j.get("api_key", "")
+            old_k = old_j.get("api_key", "")
+            # 脱敏标记：****，或前端完全清空
+            if (new_k and "*" in str(new_k)) or (not new_k and old_k):
+                new_j["api_key"] = old_k
+                new_value = json.dumps(new_j, ensure_ascii=False)
+        except Exception:
+            pass
 
     # 审计：旧值入快照
     from app.models.ai_setting import AISettingSnapshot
