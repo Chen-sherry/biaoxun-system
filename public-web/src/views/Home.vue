@@ -97,7 +97,7 @@
       <div class="dash-card">
         <div class="dash-head">
           <span class="dash-kicker">TODAY BY TYPE</span>
-          <h3><el-icon><PieChart /></el-icon> 今日新增 · 公告类型 Top5</h3>
+          <h3><el-icon><PieChart /></el-icon> 今日新增 · 公告类型 Top4</h3>
         </div>
         <div class="bar-chart" v-if="todayByType.length">
           <div class="bar-item" v-for="item in todayByType" :key="item.type">
@@ -114,7 +114,7 @@
 
       <div class="dash-card">
         <div class="dash-head">
-          <span class="dash-kicker">REGION TOP 10</span>
+          <span class="dash-kicker">REGION TOP 5</span>
           <h3><el-icon><MapLocation /></el-icon> 本月标讯 · 地区 Top5</h3>
         </div>
         <div class="h-bar-chart" v-if="regionTop10.length">
@@ -384,6 +384,7 @@ onUnmounted(() => {
   display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
 }
 .dash-card {
+  display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-lg); padding: 20px 24px;
   box-shadow: var(--shadow-card);
@@ -404,7 +405,7 @@ onUnmounted(() => {
 }
 
 /* 纵向柱状图（公告类型） */
-.bar-chart { display: flex; flex-direction: column; gap: 14px; }
+.bar-chart { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 12px; }
 .bar-item { display: flex; align-items: center; gap: 12px; }
 .bar-label {
   flex: none; width: 80px; font-size: 13px; font-weight: 500;
@@ -423,7 +424,7 @@ onUnmounted(() => {
 .bar-value { font-size: 12px; font-weight: 700; color: #fff; }
 
 /* 横向柱状图（地区分布） */
-.h-bar-chart { display: flex; flex-direction: column; gap: 10px; }
+.h-bar-chart { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 10px; }
 .h-bar-item { display: flex; align-items: center; gap: 10px; }
 .h-bar-rank {
   flex: none; width: 20px; height: 20px; border-radius: 4px;

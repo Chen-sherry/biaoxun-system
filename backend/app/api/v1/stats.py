@@ -64,9 +64,9 @@ def overview(db: Session = Depends(get_db)):
     })
 
 
-@router.get("/today-by-type", summary="当日各公告类型新增数量 Top5")
+@router.get("/today-by-type", summary="当日各公告类型新增数量 Top4")
 def today_by_type(db: Session = Depends(get_db)):
-    """当日新增标讯按公告类型分组，取数量前5"""
+    """当日新增标讯按公告类型分组，取数量前4"""
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
     rows = (
@@ -81,7 +81,7 @@ def today_by_type(db: Session = Depends(get_db)):
         )
         .group_by(BidInfo.notice_type_id, DictNoticeType.name)
         .order_by(desc("count"))
-        .limit(5)
+        .limit(4)
         .all()
     )
 
