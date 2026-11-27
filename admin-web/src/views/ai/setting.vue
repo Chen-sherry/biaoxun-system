@@ -65,10 +65,8 @@ async function load() {
             model: j.model || '',
           }
           // 初始状态：API Key 未被修改（显示的是脱敏值）
-          apiKeyEdited.value[k] = false
         } catch {
           scenes.value[k] = { provider: 'deepseek', base_url: '', api_key: '', model: '' }
-          apiKeyEdited.value[k] = false
         }
       } else if (row.idx_set === 'prompt') {
         prompts.value[k] = row.value || ''
@@ -80,7 +78,6 @@ async function load() {
     for (const s of SCENES) {
       if (!scenes.value[s.key]) {
         scenes.value[s.key] = { provider: 'deepseek', base_url: 'https://api.deepseek.com/v1', api_key: '', model: 'deepseek-chat' }
-        apiKeyEdited.value[s.key] = false
       }
     }
   } catch (e: any) {
@@ -102,9 +99,7 @@ function onProviderChange(k: string) {
 // API Key 输入框修改 → 标记为已编辑
 function onApiKeyInput(k: string, value: string) {
   scenes.value[k].api_key = value
-  // 如果从脱敏值（含*）变成非脱敏值，标记为已编辑
-  const oldVal = scenes.value[k].api_key // 这里取的是修改前的值，需要在外层判断
-  apiKeyEdited.value[k] = true
+  apiKeyEdited.value = { ...apiKeyEdited.value, [k]: true }
 }
 
 // ========== 保存 ==========
@@ -124,7 +119,7 @@ async function saveScene(k: string) {
     await saveAISetting(k, { value: JSON.stringify(payload, null, 2) })
     ElMessage.success('已保存（立即生效）')
     // 保存后，API Key 又被脱敏，重置编辑状态
-    apiKeyEdited.value[k] = false
+    apiKeyEdited.value = { ...apiKeyEdited.value, [k]: false }
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '保存失败')
   }
@@ -239,11 +234,9 @@ onMounted(load)
             <el-form-item label="API Key">
               <el-input 
                 v-model="scenes[s.key].api_key" 
-                type="password" 
-                show-password
                 :placeholder="scenes[s.key].api_key ? '留空 = 保留原 key' : 'sk-xxxxxxxxxxxxxxxxxxxxxxxx'"
                 style="width: 420px"
-                @input="onApiKeyInput(s.key, ($event.target as HTMLInputElement).value)"
+                @update:modelValue="onApiKeyInput(s.key, $event)"
               />
               <div class="form-hint">
                 <template v-if="scenes[s.key].api_key && scenes[s.key].api_key.includes('*') && !apiKeyEdited[s.key]">
