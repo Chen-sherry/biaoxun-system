@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import time
+from app.redis_client import cache_get, cache_set, cache_key
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -123,7 +124,15 @@ def _default_cond(query: str) -> Dict[str, Any]:
 
 
 def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
-    """大白话 → 结构化条件。返回 (条件, LLM 是否成功)。失败降级为纯关键词。"""
+    """大白话 → 结构化条件。返回 (条件, LLM 是否成功)。失败降级为纯关键词。
+    带 Redis 缓存（TTL 600s），相同 query 直接返回缓存结果。"""
+    # 缓存查询
+    ck = cache_key("ai_translate", query)
+    cached = cache_get(ck)
+    if cached is not None:
+        logger.debug(f"[ai_search] 转译缓存命中: {query[:30]}")
+        return cached, True
+
     default = _expand_region_aliases(query, _default_cond(query))
     model_cfg = svc.get_model("search")
     if not (model_cfg.get("api_key") or settings.deepseek_api_key):
@@ -156,7 +165,10 @@ def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
             if isinstance(syn, list) else []
         for k in default:
             data.setdefault(k, default[k])
-        return _expand_region_aliases(query, data), True
+        result = _expand_region_aliases(query, data)
+        # 写入缓存
+        cache_set(ck, result, ttl=600)
+        return result, True
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[ai_search] 转译失败，降级关键词: {e}")
         return default, False
@@ -711,7 +723,17 @@ def ai_search(query: str, limit: int = 120,
     高相关（>=75），点「加载更多」按 60/40/20/0 分档逐级放宽，直到全部显示。
     最高分低于展示底线（FALLBACK_MIN_SCORE）视为真无关 → 返回空列表走空态。
     score_cap：送 LLM 打分的候选条数上限（None=60；对话场景传 24 更省）。
+    带 Redis 缓存（TTL 300s），相同 query+limit 直接返回缓存结果。
     """
+    # 缓存查询
+    ck = cache_key("ai_search", query, str(limit), str(score_cap or ""))
+    cached = cache_get(ck)
+    if cached is not None:
+        logger.debug(f"[ai_search] 结果缓存命中: {query[:30]}")
+        cached["cost_ms"] = 0
+        cached["cache_hit"] = True
+        return cached
+
     t0 = time.time()
     cond, llm_translate_ok = translate_query(query)
     candidates, date_relaxed, meta = search_candidates(cond)
@@ -735,7 +757,7 @@ def ai_search(query: str, limit: int = 120,
     lib_range, _ = _lib_date_note()
     total_hits = _count_total(cond)   # 关键词全量命中数（前端显示真实总数）
 
-    return {
+    result = {
         "items": items_out,
         "translated": dict(cond),
         "date_relaxed": date_relaxed,
@@ -758,3 +780,6 @@ def ai_search(query: str, limit: int = 120,
             "llm_score_ok": score_diag["llm_score_ok"],
         },
     }
+    # 写入缓存（TTL 300s）
+    cache_set(ck, result, ttl=300)
+    return result
