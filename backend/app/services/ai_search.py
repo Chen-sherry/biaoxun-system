@@ -52,7 +52,8 @@ TRANSLATE_PROMPT = """你是标讯（招投标公告）检索系统的查询转�
 
 可用字段与取值规则：
 - keywords: string[]，3~6 个核心检索词（保留原意，名词短语，不要含"找/帮我/最近"等虚词）
-- synonyms: string[]，2~5 个同义词或上位词（如 学校→中小学、幼儿园、教育局；医院→卫生院、人民医院），用于扩大召回；没有合适的给 []
+- synonyms: string[]，2~10 个同义词、上位词或地区展开词（如 学校→中小学、幼儿园、教育局；医院→卫生院、人民医院），用于扩大召回；没有合适的给 []
+- 地区概念必须展开：用户提到口语化区域（粤北/珠三角/粤东/粤西/粤西地区/长三角/京津冀/东北/西北 等）时，keywords 保留概念词本身，synonyms 必须列出该区域覆盖的城市名（粤北→韶关、清远、云浮；珠三角→广州、深圳、佛山、东莞、中山、珠海、惠州、江门、肇庆；粤东→汕头、潮州、揭阳、汕尾；粤西→湛江、茂名、阳江；长三角→上海、南京、杭州、苏州、无锡、宁波；京津冀→北京、天津、石家庄），让城市名参与召回
 - region_code: 6 位国标行政区划代码（如 合肥=340100、安徽=340000、北京=110000、朝阳区=110105）。用户提到市/区县用对应完整代码，提到省用省代码，没提则 null
 - region_name: 与 region_code 对应的中文名（如 合肥、安徽），用于显示，没提则 null
 - date_from / date_to: YYYY-MM-DD，按用户话里的相对时间换算成具体日期（如"最近一个月"→ date_from=一个月前），没提则 null
@@ -118,7 +119,7 @@ def translate_query(query: str) -> Tuple[Dict[str, Any], bool]:
         if not isinstance(data.get("keywords"), list) or not data["keywords"]:
             data["keywords"] = default["keywords"]
         syn = data.get("synonyms")
-        data["synonyms"] = [str(s).strip() for s in syn if isinstance(s, str) and s.strip()][:5] \
+        data["synonyms"] = [str(s).strip() for s in syn if isinstance(s, str) and s.strip()][:10] \
             if isinstance(syn, list) else []
         for k in default:
             data.setdefault(k, default[k])
@@ -346,6 +347,12 @@ def _fetch_rows(cond: Dict[str, Any], lv: Dict[str, bool],
             where.append(f"MATCH({match_cols}) AGAINST(:ft IN BOOLEAN MODE) > 0")
             params["ft"] = ft_expr
         elif match and match["kind"] == "like":
+            # LIKE 兜底层同样带上 synonyms（地区展开词/同义词），避免口语区域词召回过少
+            words = list(keywords)
+            for s in cond.get("synonyms") or []:
+                if s and s not in words:
+                    words.append(s)
+            keywords = words[:10]
             for i, kw in enumerate(keywords):
                 params[f"kw{i}"] = f"%{kw}%"
                 rank_expr_parts.append(
