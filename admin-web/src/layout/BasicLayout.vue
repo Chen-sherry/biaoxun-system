@@ -2,24 +2,43 @@
   <el-container class="basic-layout">
     <el-aside width="224px" class="aside">
       <div class="logo">
-        <BrandLogo :size="32" :text-size="17" text="标讯管理中台" light />
+        <BrandLogo :size="32" :text-size="17" text="标讯管理后台" light />
       </div>
       <div class="aside-glow" aria-hidden="true"></div>
-      <div class="aside-label">工作台 / WORKSPACE</div>
       <el-menu
         :default-active="route.path"
+        :default-openeds="defaultOpeneds"
         router
         class="menu"
         background-color="transparent"
         text-color="#93a9c4"
         active-text-color="#38bdf8"
       >
+        <!-- 工作台：独立常驻，不折叠 -->
         <template v-for="item in menuList" :key="item.path">
           <el-menu-item :index="'/' + item.path">
             <el-icon v-if="item.meta?.icon"><component :is="item.meta.icon" /></el-icon>
             <template #title>{{ item.meta?.title }}</template>
           </el-menu-item>
         </template>
+        <!-- 其余业务分组：可折叠 -->
+        <el-sub-menu
+          v-for="g in groupedMenus"
+          :key="g.key"
+          :index="g.key"
+        >
+          <template #title>
+            <el-icon><component :is="g.icon" /></el-icon>
+            <span>{{ g.title }}</span>
+          </template>
+          <el-menu-item
+            v-for="item in g.children"
+            :key="item.path"
+            :index="'/' + item.path"
+          >
+            <template #title>{{ item.meta?.title }}</template>
+          </el-menu-item>
+        </el-sub-menu>
       </el-menu>
       <div class="aside-footer">
         <span class="status-dot"></span> 系统运行正常
@@ -65,14 +84,47 @@ import { ArrowDown } from '@element-plus/icons-vue'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { constantRoutes } from '@/router/routes'
 import { useUserStore } from '@/stores/user'
+import type { RouteRecordRaw } from 'vue-router'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-const menuList = computed(() => {
+const allMenus = computed<RouteRecordRaw[]>(() => {
   const root = constantRoutes.find((r) => r.path === '/' && r.children)
   return (root?.children || []).filter((c) => !c.meta?.hidden)
+})
+
+// 工作台：控制台独立常驻
+const menuList = computed(() =>
+  allMenus.value.filter((c) => c.path === 'dashboard')
+)
+
+// 分组定义（key 同时是 el-sub-menu index）
+const GROUP_DEFS = [
+  { key: 'bid',     title: '标讯管理',   icon: 'Document',    match: ['bid/'] },
+  { key: 'data',    title: '采集与数据', icon: 'MagicStick',  match: ['crawl/', 'data/', 'ai/'] },
+  { key: 'push',    title: '推送中心',   icon: 'Promotion',   match: ['push/'] },
+  { key: 'member',  title: '会员与用户', icon: 'Medal',       match: ['member/', 'user/'] },
+  { key: 'setting', title: '系统设置',   icon: 'Setting',     match: ['setting/'] },
+]
+
+const groupedMenus = computed(() => {
+  return GROUP_DEFS
+    .map((g) => {
+      const children = allMenus.value.filter(
+        (c) => g.match.some((p) => String(c.path).startsWith(p))
+      )
+      return { ...g, children }
+    })
+    .filter((g) => g.children.length > 0)
+})
+
+// 根据当前路由自动展开所属分组
+const defaultOpeneds = computed(() => {
+  const cur = route.path.replace(/^\//, '')
+  const g = GROUP_DEFS.find((g) => g.match.some((p) => cur.startsWith(p)))
+  return g ? [g.key] : []
 })
 
 function handleCommand(cmd: string) {
@@ -135,6 +187,18 @@ function handleCommand(cmd: string) {
   content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px;
   border-radius: 0 3px 3px 0; background: var(--accent); box-shadow: 0 0 10px var(--accent-glow);
 }
+.menu :deep(.el-sub-menu__title) {
+  height: 40px; line-height: 40px; margin: 2px 10px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; letter-spacing: 0.5px;
+  color: rgba(148, 197, 232, 0.78);
+}
+.menu :deep(.el-sub-menu__title:hover) {
+  background: rgba(56, 189, 248, 0.10); color: #fff;
+}
+.menu :deep(.el-sub-menu__title .el-sub-menu__icon-arrow) {
+  right: 14px; color: rgba(148, 197, 232, 0.5); font-size: 12px;
+}
+.menu :deep(.el-sub-menu .el-menu-item) { height: 40px; line-height: 40px; margin: 0 10px 2px; padding-left: 48px; font-size: 13px; }
 .aside-footer {
   position: relative; z-index: 1; flex: none;
   padding: 16px 22px; font-size: 12px; color: var(--on-dark-mute);
