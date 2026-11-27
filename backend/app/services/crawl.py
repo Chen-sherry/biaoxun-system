@@ -758,6 +758,25 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                                         setattr(row, k, v)
                                 except Exception:
                                     logger.warning("补正文后提取失败 id=%s", row.id, exc_info=True)
+
+                                # 源站专用 extractor 补漏（同入库路径）
+                                try:
+                                    from app.services.source_specs import fill_gaps_via_spec
+                                    spec_fields = fill_gaps_via_spec(
+                                        code,
+                                        row.content or row.content_text or "",
+                                        {"tenderee": row.tenderee,
+                                         "agency": getattr(row, "agency", None),
+                                         "budget": row.budget,
+                                         "deadline": row.deadline,
+                                         "winner_unit": row.winner_unit,
+                                         "win_amount": row.win_amount,
+                                         "project_code": row.project_code,
+                                         "region_code": row.region_code})
+                                    for k, v in spec_fields.items():
+                                        setattr(row, k, v)
+                                except Exception:
+                                    logger.warning("补正文后 SourceSpec 失败 id=%s", row.id, exc_info=True)
                             stats["updated"] += 1
                 stats["skipped"] += 1
                 return
@@ -791,6 +810,32 @@ def crawl_and_save(code: str, pages: int = 1, max_detail: int = MAX_DETAIL_PER_R
                     mapped.update(extra)
                 except Exception:
                     logger.warning("入库即提取失败 title=%s", str(mapped.get("title"))[:40], exc_info=True)
+
+            # === 2026-11-27: 源站专用 extractor 补漏（source_specs.py） ===
+            # 走专用 parser 扫 content HTML，只填通用正则漏掉的空字段
+            # 优先级：源站专用 > 通用规则 > AI 兜底
+            try:
+                from app.services.source_specs import fill_gaps_via_spec
+                current_for_spec = {
+                    "tenderee": mapped.get("tenderee"),
+                    "agency": mapped.get("agency"),
+                    "budget": mapped.get("budget"),
+                    "deadline": mapped.get("deadline"),
+                    "winner_unit": mapped.get("winner_unit"),
+                    "win_amount": mapped.get("win_amount"),
+                    "project_code": mapped.get("project_code"),
+                    "region_code": mapped.get("region_code"),
+                }
+                spec_fields = fill_gaps_via_spec(
+                    code,
+                    mapped.get("content") or mapped.get("content_text") or "",
+                    current_for_spec)
+                if spec_fields:
+                    mapped.update(spec_fields)
+                    logger.info("[crawl] SourceSpec(%s) 补到字段: %s", code, list(spec_fields.keys()))
+            except Exception:
+                logger.warning("SourceSpec 专用提取失败 title=%s",
+                               str(mapped.get("title"))[:40], exc_info=True)
 
             # 双线第二道（2026-11-26）：规则提取后关键字段仍不满 → AI 兜底提取，
             # 同一次调用顺带让 AI 分类（行业/客群/公告类型，方案 A 不新增触发）。
