@@ -1,0 +1,17 @@
+{
+  "description": "智能检索评测集。每条: query 查询词; topic_keywords 结果标题/摘要命中任一即视为主题相关; region_keywords 可选, 结果地区名命中任一才算地区正确(空=不限地区)。改完 eval_search.py 后用真实数据校准。",
+  "cases": [
+    {"query": "华南地区运营商项目", "topic_keywords": ["运营商", "通信", "电信", "移动", "联通", "铁塔"], "region_keywords": ["广东", "广西", "海南", "广州", "深圳", "南宁", "海口"]},
+    {"query": "珠三角消防工程", "topic_keywords": ["消防"], "region_keywords": ["广州", "深圳", "东莞", "佛山", "珠海", "中山", "惠州", "江门", "肇庆"]},
+    {"query": "合肥学校消防改造", "topic_keywords": ["学校", "小学", "中学", "幼儿园", "消防"], "region_keywords": ["合肥"]},
+    {"query": "医院信息化建设", "topic_keywords": ["医院", "医疗", "卫生"], "region_keywords": []},
+    {"query": "华东地区学校食堂承包", "topic_keywords": ["食堂", "餐饮", "伙食"], "region_keywords": ["上海", "江苏", "浙江", "安徽", "福建", "江西", "山东", "南京", "杭州", "合肥", "济南", "南昌", "福州"]},
+    {"query": "数据中心机房建设", "topic_keywords": ["数据中心", "机房", "算力", "服务器"], "region_keywords": []},
+    {"query": "智慧城市建设项目", "topic_keywords": ["智慧城市", "智慧化", "数字化", "城市大脑"], "region_keywords": []},
+    {"query": "污水处理厂运营", "topic_keywords": ["污水", "水处理", "环保"], "region_keywords": []},
+    {"query": "光伏发电项目", "topic_keywords": ["光伏", "太阳能", "新能源"], "region_keywords": []},
+    {"query": "安防监控系统采购", "topic_keywords": ["安防", "监控", "视频", "摄像头"], "region_keywords": []},
+    {"query": "物业管理服务采购", "topic_keywords": ["物业"], "region_keywords": []},
+    {"query": "道路养护工程", "topic_keywords": ["道路", "公路", "养护", "路面"], "region_keywords": []}
+  ]
+}
