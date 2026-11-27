@@ -564,6 +564,8 @@ def _augment_with_semantic(candidates: List[Dict[str, Any]], cond: Dict[str, Any
             c["_sim"] = s
     missing = [i for i in ordered if i not in existing]
     extra = _fetch_bids_by_ids(missing)
+    # 有地区约束时，语义新增候选必须命中地区，否则不并入（避免污染地区限定查询）
+    extra = [r for r in extra if _region_match(cond, r.get("region_code")) is not False]
     for r in extra:
         r["_sim"] = sim_by_id.get(r["id"], 0.0)
     return candidates + extra, {"semantic_enabled": True, "semantic_added": len(extra)}
@@ -641,19 +643,36 @@ def _cond_note(cond: Optional[Dict[str, Any]]) -> str:
     return "\n用户限定条件（只对这些维度扣分）：" + "；".join(parts)
 
 
-def _region_subscore(cond: Optional[Dict[str, Any]], region_code: Any) -> Optional[int]:
-    """按大区落成的地区码前缀，对候选的 region_code 做确定性命中判定。
-    命中 100，不符 0；无前缀或无候选码时返回 None（交给 LLM 的地区分兜底）。"""
-    prefixes = (cond or {}).get("region_prefixes")
-    if not prefixes:
+def _region_match(cond: Optional[Dict[str, Any]], region_code: Any) -> Optional[bool]:
+    """判断候选是否落在用户地区约束内。
+    True=命中 / False=明确不符或无法确认 / None=用户未限定地区（不判分）。
+    大区用前缀集合；精确区划码按层级前缀比对；有约束但候选缺码时判 False（无法确认不算命中）。"""
+    if not cond:
         return None
+    prefixes = cond.get("region_prefixes")
     code = str(region_code or "").strip()
-    if not code:
+    if prefixes:
+        if not code:
+            return False
+        return any(code.startswith(p) for p in prefixes)
+    rc = str(cond.get("region_code") or "").strip()
+    if len(rc) == 6 and rc.isdigit():
+        if not code:
+            return False
+        if rc.endswith("0000"):
+            return code.startswith(rc[:2])
+        if rc.endswith("00"):
+            return code.startswith(rc[:4])
+        return code == rc
+    return None
+
+
+def _region_subscore(cond: Optional[Dict[str, Any]], region_code: Any) -> Optional[int]:
+    """地区维度确定性命中分：命中 100 / 不符 0 / 无地区约束 None（交给模型）。"""
+    m = _region_match(cond, region_code)
+    if m is None:
         return None
-    for p in prefixes:
-        if code.startswith(p):
-            return 100
-    return 0
+    return 100 if m else 0
 
 
 def _compose_score(s: Dict[str, Any], cond: Optional[Dict[str, Any]],
