@@ -827,12 +827,12 @@ def ai_search(query: str, limit: int = 120,
 
     t0 = time.time()
     cond, llm_translate_ok = translate_query(query)
-    # 大区/口语区域（华南/珠三角…）→ 落成地区码前缀，供地区维度精确判定（仅当未给精确区划码时）
-    if not cond.get("region_code"):
-        grp = _detect_region_group(query)
-        if grp:
-            cond["region_name"] = cond.get("region_name") or grp[0]
-            cond["region_prefixes"] = grp[1]
+    # 大区/口语区域（华南/珠三角…）优先：覆盖转译层可能误设的单省 region_code，改用地区码前缀集合
+    grp = _detect_region_group(query)
+    if grp:
+        cond["region_name"] = grp[0]
+        cond["region_prefixes"] = grp[1]
+        cond["region_code"] = None
     candidates, date_relaxed, meta = search_candidates(cond)
     candidates, budget_dropped = _apply_budget_filter(cond, candidates)
     scored, score_diag = score_candidates(query, candidates, date_relaxed=date_relaxed,
