@@ -42,6 +42,13 @@ class AIChatStreamIn(BaseModel):
     inject_context: Optional[bool] = True
 
 
+@router.get("/hot-searches", summary="热门搜索词 Top N")
+def hot_searches(limit: int = 10):
+    """返回热门搜索词（按搜索次数降序），无需登录。"""
+    from app.services.ai_search import get_hot_searches
+    return ApiResponse.ok(get_hot_searches(min(limit, 20)))
+
+
 @router.post("/chat/stream", summary="AI 悬浮球流式对话（SSE）")
 async def chat_stream(
     req: AIChatStreamIn,

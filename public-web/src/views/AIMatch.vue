@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ChatLineRound, MagicStick, Clock, Search, ArrowRight, DataAnalysis } from '@element-plus/icons-vue'
+import { ChatLineRound, MagicStick, Clock, Search, ArrowRight, DataAnalysis, TrendCharts, Delete, Close } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const router = useRouter()
@@ -11,6 +11,80 @@ const route = useRoute()
 const query = ref('')
 const loading = ref(false)
 const hasSearched = ref(false)
+
+// ===== 搜索建议（热门搜索 + 个人历史） =====
+const showSuggestions = ref(false)
+const hotSearches = ref<{ query: string; count: number }[]>([])
+const personalHistory = ref<string[]>([])
+const HISTORY_KEY = 'biaoxun_search_history'
+const HISTORY_MAX = 8
+
+// 加载个人搜索历史（localStorage）
+function loadPersonalHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    personalHistory.value = raw ? JSON.parse(raw) : []
+  } catch { personalHistory.value = [] }
+}
+
+// 保存搜索词到个人历史
+function saveToHistory(q: string) {
+  const text = (q || '').trim()
+  if (!text || text.length < 2) return
+  const list = personalHistory.value.filter(h => h !== text)  // 去重
+  list.unshift(text)  // 最新在前
+  personalHistory.value = list.slice(0, HISTORY_MAX)
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(personalHistory.value))
+}
+
+// 清空个人历史
+function clearHistory() {
+  personalHistory.value = []
+  localStorage.removeItem(HISTORY_KEY)
+}
+
+// 删除单条历史
+function removeHistoryItem(text: string) {
+  personalHistory.value = personalHistory.value.filter(h => h !== text)
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(personalHistory.value))
+}
+
+// 加载热门搜索
+async function loadHotSearches() {
+  try {
+    const res = await axios.get(`${import.meta.env.VITE_API_BASE || ''}/api/v1/ai/hot-searches?limit=8`)
+    if (res.data.code === 0) hotSearches.value = res.data.data || []
+  } catch { /* 忽略 */ }
+}
+
+// 点击建议词
+function pickSuggestion(text: string) {
+  query.value = text
+  showSuggestions.value = false
+  doAiSearch()
+}
+
+// 输入框聚焦
+function onSearchFocus() {
+  loadPersonalHistory()
+  if (!hotSearches.value.length) loadHotSearches()
+  showSuggestions.value = true
+}
+
+// 点击外部关闭建议
+function onClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('.search-suggest-box') && !target.closest('.search-input-wrap')) {
+    showSuggestions.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onClickOutside)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', onClickOutside)
+})
 
 interface AIItem {
   id: number
@@ -152,6 +226,8 @@ async function doAiSearch() {
       dateRelaxed.value = !!data.date_relaxed
       fallbackUsed.value = !!data.fallback_used
       initBand()   // 按结果分布定初始档位
+      // 保存搜索词到个人历史
+      saveToHistory(q)
       if (items.value.length === 0) {
         ElMessage.info('没有找到达到展示分数的相关标讯，换个说法试试')
       }
@@ -245,20 +321,51 @@ onMounted(async () => {
       <el-card shadow="never" class="main-card tech-card">
         <!-- 搜索框 -->
         <div class="search-area">
-          <el-input
-            v-model="query"
-            size="large"
-            placeholder="描述你要找的标讯，例如：合肥的学校招标，预算100万以内，最近一个月"
-            clearable
-            @keyup.enter="doAiSearch"
-          >
-            <template #prefix><el-icon><MagicStick /></el-icon></template>
-            <template #append>
-              <el-button type="primary" :loading="loading" @click="doAiSearch">
-                <el-icon><Search /></el-icon> AI 检索
-              </el-button>
-            </template>
-          </el-input>
+          <div class="search-input-wrap">
+            <el-input
+              v-model="query"
+              size="large"
+              placeholder="描述你要找的标讯，例如：合肥的学校招标，预算100万以内，最近一个月"
+              clearable
+              @keyup.enter="doAiSearch"
+              @focus="onSearchFocus"
+            >
+              <template #prefix><el-icon><MagicStick /></el-icon></template>
+              <template #append>
+                <el-button type="primary" :loading="loading" @click="doAiSearch">
+                  <el-icon><Search /></el-icon> AI 检索
+                </el-button>
+              </template>
+            </el-input>
+            <!-- 搜索建议下拉 -->
+            <div v-if="showSuggestions && (personalHistory.length || hotSearches.length)" class="search-suggest-box">
+              <!-- 个人历史 -->
+              <div v-if="personalHistory.length" class="suggest-section">
+                <div class="suggest-header">
+                  <span><el-icon><Clock /></el-icon> 我的搜索历史</span>
+                  <span class="suggest-clear" @click.stop="clearHistory"><el-icon><Delete /></el-icon> 清空</span>
+                </div>
+                <div class="suggest-tags">
+                  <span v-for="h in personalHistory" :key="h" class="suggest-tag" @click.stop="pickSuggestion(h)">
+                    {{ h }}
+                    <el-icon class="tag-del" @click.stop="removeHistoryItem(h)"><Close /></el-icon>
+                  </span>
+                </div>
+              </div>
+              <!-- 热门搜索 -->
+              <div v-if="hotSearches.length" class="suggest-section">
+                <div class="suggest-header">
+                  <span><el-icon><TrendCharts /></el-icon> 热门搜索</span>
+                </div>
+                <div class="suggest-tags">
+                  <span v-for="(item, idx) in hotSearches" :key="item.query" class="suggest-tag hot" @click.stop="pickSuggestion(item.query)">
+                    <em class="hot-rank">{{ idx + 1 }}</em>
+                    {{ item.query }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 默认展示 75+ 高相关</div>
         </div>
 
@@ -403,6 +510,42 @@ onMounted(async () => {
 }
 .hint { font-size: 12px; color: var(--ink-500); margin-top: 10px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 5px; }
 .hint :deep(.el-icon) { color: var(--accent-strong); }
+
+/* ===== 搜索建议下拉 ===== */
+.search-input-wrap { position: relative; }
+.search-suggest-box {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08); padding: 12px 16px;
+  max-height: 320px; overflow-y: auto;
+}
+.suggest-section { margin-bottom: 12px; }
+.suggest-section:last-child { margin-bottom: 0; }
+.suggest-header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; color: var(--ink-500); margin-bottom: 8px;
+}
+.suggest-header span { display: flex; align-items: center; gap: 4px; }
+.suggest-clear { cursor: pointer; color: var(--ink-400); transition: color 0.2s; }
+.suggest-clear:hover { color: var(--accent); }
+.suggest-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.suggest-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 12px; font-size: 13px; color: var(--ink-700);
+  background: var(--surface-muted); border: 1px solid var(--line);
+  border-radius: 16px; cursor: pointer; transition: all 0.2s;
+}
+.suggest-tag:hover { background: rgba(56,189,248,0.08); border-color: var(--accent-line); color: var(--accent-deep); }
+.suggest-tag .tag-del { font-size: 12px; color: var(--ink-400); margin-left: 2px; }
+.suggest-tag .tag-del:hover { color: #ef4444; }
+.suggest-tag.hot { padding-left: 8px; }
+.hot-rank {
+  font-style: normal; font-size: 11px; font-weight: 700;
+  width: 16px; height: 16px; line-height: 16px; text-align: center;
+  border-radius: 4px; margin-right: 4px;
+  background: var(--surface); color: var(--ink-500);
+}
+.suggest-tag.hot:nth-child(-n+3) .hot-rank { background: linear-gradient(135deg, #f97316, #ef4444); color: #fff; }
 
 /* AI 加载动画 */
 .loading-area { text-align: center; padding: 56px 0 40px; }

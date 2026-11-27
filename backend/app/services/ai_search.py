@@ -773,4 +773,42 @@ def ai_search(query: str, limit: int = 120,
     }
     # 写入缓存（TTL 300s）
     cache_set(ck, result, ttl=300)
+    # 记录热门搜索（Redis sorted set，异步不阻塞主流程）
+    _record_hot_search(query)
     return result
+
+
+# ---------------------------------------------------------------- #
+#  热门搜索（Redis sorted set）
+# ---------------------------------------------------------------- #
+
+_HOT_SEARCH_KEY = "search:hot"
+_HOT_SEARCH_MAX = 200  # 最多保留 200 个词
+
+
+def _record_hot_search(query: str) -> None:
+    """把搜索词记入 Redis sorted set（ZINCRBY），失败静默。"""
+    q = (query or "").strip()
+    if not q or len(q) < 2:
+        return
+    try:
+        from app.redis_client import get_redis
+        r = get_redis()
+        r.zincrby(_HOT_SEARCH_KEY, 1, q)
+        # 保留 top N，避免集合无限膨胀
+        r.zremrangebyrank(_HOT_SEARCH_KEY, 0, -_HOT_SEARCH_MAX - 1)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[ai_search] 记录热门搜索失败: {e}")
+
+
+def get_hot_searches(limit: int = 10) -> list:
+    """返回热门搜索词列表 [{"query": "...", "count": N}, ...]"""
+    try:
+        from app.redis_client import get_redis
+        r = get_redis()
+        # ZREVRANGE 按分数降序取 top N，WITHSCORES 返回分数
+        items = r.zrevrange(_HOT_SEARCH_KEY, 0, limit - 1, withscores=True)
+        return [{"query": q, "count": int(c)} for q, c in items]
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[ai_search] 获取热门搜索失败: {e}")
+        return []
