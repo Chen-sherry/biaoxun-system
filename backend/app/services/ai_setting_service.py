@@ -42,6 +42,14 @@ _DEFAULTS: Dict[str, Any] = {
     "model.push_generate": None,
     "model.extract_ai": None,
 
+    # 阿里云 qwen-plus：DeepSeek API Key 为空时的兜底
+    "model.alibaba_cloud_fallback": {
+        "provider": "alibaba",
+        "base_url": settings.alibaba_base_url,
+        "api_key": settings.alibaba_api_key,
+        "model": settings.alibaba_model,
+    },
+
     # ② Prompt（text）—— 消费方 import CHAT_SYSTEM_PROMPT 常量的地方改成 get("prompt.xxx")
     #    默认值在 ai_chat.py / ai_push.py / ai_extract.py 里各自硬编码一份（同一份文案），
     #    DB 未配置时继续用源码常量
@@ -122,7 +130,7 @@ def invalidate(key: Optional[str] = None) -> None:
 def get_model(scene: str = "chat_system") -> Dict[str, str]:
     """获取某个业务场景当前要使用的模型配置（dict：provider/base_url/api_key/model）。
     优先从 DB 读 model.<scene>；DB 行的 api_key 为空视为"未配置"，强制回退。
-    最终兜底 config.py 默认值。
+    最终兜底：DeepSeek 无 key → 阿里云 qwen-plus；仍无 key → 空字典（调用方会报错并走兜底流程）。
     """
     if scene == "chat_system":
         key = "model.chat_system"
@@ -135,7 +143,11 @@ def get_model(scene: str = "chat_system") -> Dict[str, str]:
         if key != "model.chat_system":
             cfg = get("model.chat_system")
     if not cfg or not isinstance(cfg, dict) or not (cfg.get("api_key") or "").strip():
-        # 最终兜底 config.py
+        # 阿里云 qwen-plus：DeepSeek API Key 为空时的兜底
+        fb = _DEFAULTS.get("model.alibaba_cloud_fallback")
+        if fb and isinstance(fb, dict) and (fb.get("api_key") or "").strip():
+            return fb
+        # 最终兜底 config.py（通常也是空的）
         cfg = _DEFAULTS["model.chat_system"]
     return cfg
 

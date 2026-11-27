@@ -37,6 +37,8 @@ INSERT IGNORE INTO ai_setting (setting_key, value, value_type, remark, idx_set) 
  'json', '推送 AI 生成：function calling + 文案', 'model'),
 ('model.extract_ai',      '{"provider":"deepseek","base_url":"https://api.deepseek.com/v1","api_key":"","model":"deepseek-chat"}',
  'json', 'AI 兜底提取：关键字段补提取 + 分类', 'model'),
+('model.alibaba_cloud_fallback', '{"provider":"alibaba","base_url":"https://dashscope.aliyuncs.com/compatible-mode/v1","api_key":"","model":"qwen-plus"}',
+ 'json', '阿里云 DashScope（DeepSeek API Key 为空时的兜底）', 'model'),
 
 -- ② Prompt（三处硬编码）
 ('prompt.chat_system',

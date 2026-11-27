@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     llm_max_retries: int = 1   # LLM 可重试错误（timeout/429/5xx）的重试次数
     chat_daily_limit: int = 30  # AI 悬浮球：每会员每日对话条数频控（0=不限）
 
+    # ===== 阿里云 DashScope（DeepSeek 兜底 · qwen-plus）=====
+    alibaba_api_key: str = ""
+    alibaba_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    alibaba_model: str = "qwen-plus"
+
     # ===== 爬虫出口代理 =====
     ccgp_proxy: str = ""  # ccgp.gov.cn 专用代理（服务器 IP 被封 403 时配置，如 http://user:pass@host:port；留空直连）
 
