@@ -26,7 +26,12 @@
 
       <div class="toolbar">
         <span class="total">共 {{ total }} 条待审核</span>
-        <el-button size="small" :loading="loading" @click="loadData">刷新</el-button>
+        <div class="toolbar-right">
+          <el-button size="small" type="primary" plain :loading="batchLoading" @click="onBatchForceAi">
+            一键转AI
+          </el-button>
+          <el-button size="small" :loading="loading" @click="loadData">刷新</el-button>
+        </div>
       </div>
 
       <el-table :data="list" v-loading="loading" stripe>
@@ -48,11 +53,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="publish_time" label="发布时间" width="160" />
-        <el-table-column label="操作" width="290" fixed="right">
+        <el-table-column label="操作" width="350" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="goEdit(row.id)">编辑</el-button>
             <el-button link type="warning" :loading="row._extracting" @click="onReextract(row)">
               重新提取
+            </el-button>
+            <el-button link type="primary" :loading="row._aiing" @click="onForceAi(row)">
+              转AI
             </el-button>
             <el-button link type="success" @click="onAudit(row.id)">通过</el-button>
             <el-button link type="danger" @click="onReject(row.id)">驳回</el-button>
@@ -69,13 +77,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import {
-  fetchBidList, auditBid, reextractBid,
+  fetchBidList, auditBid, reextractBid, forceAiBid, batchForceAi,
   fetchExtractSwitch, updateExtractSwitch,
 } from '@/api'
 
 const router = useRouter()
 const loading = ref(false)
 const switchLoading = ref(false)
+const batchLoading = ref(false)
 const aiEnabled = ref(true)
 const list = ref<any[]>([])
 const total = ref(0)
@@ -143,6 +152,40 @@ async function onReextract(row: any) {
   }
 }
 
+async function onForceAi(row: any) {
+  row._aiing = true
+  try {
+    const d = await forceAiBid(row.id)
+    if (!d.ai_ok) {
+      ElMessage.warning('AI 调用失败，请稍后重试或手工编辑')
+    } else {
+      const n = Object.keys(d.updated || {}).length
+      ElMessage.success(d.msg || (n ? `AI 补全 ${n} 个字段，已自动通过` : '已自动通过'))
+    }
+    await loadData()
+  } finally {
+    row._aiing = false
+  }
+}
+
+async function onBatchForceAi() {
+  await ElMessageBox.confirm(
+    `确认一键转 AI？将对当前所有待审核标讯强制走 AI 补提取（共 ${total.value} 条）`,
+    '一键转AI',
+    { type: 'warning', confirmButtonText: '开始', cancelButtonText: '取消' }
+  )
+  batchLoading.value = true
+  try {
+    const d = await batchForceAi()
+    ElMessage.success(
+      `完成：共 ${d.total} 条，成功 ${d.ok} 条，AI 失败 ${d.failed} 条，补全 ${d.updated_fields} 个字段`
+    )
+    await loadData()
+  } finally {
+    batchLoading.value = false
+  }
+}
+
 async function onAudit(id: number) {
   await ElMessageBox.confirm('确认审核通过？通过后标讯将对前台可见', '审核', { type: 'warning' })
   await auditBid(id)
@@ -167,6 +210,7 @@ onMounted(() => { loadData(); loadSwitch() })
 .switch-hint { font-size: 12px; color: #67c23a; }
 .switch-hint.off { color: #e6a23c; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 10px; }
+.toolbar-right { display: flex; align-items: center; gap: 8px; }
 .total { font-size: 12px; color: #909399; }
 .miss-tag { margin-right: 4px; }
 .ok-text { font-size: 12px; color: #67c23a; }

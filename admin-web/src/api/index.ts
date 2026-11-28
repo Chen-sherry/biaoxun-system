@@ -18,6 +18,16 @@ export function reextractBid(id: number) {
   return request.post(`/api/v1/bids/${id}/reextract`)
 }
 
+// 强制走 AI 提取（无视开关）
+export function forceAiBid(id: number) {
+  return request.post(`/api/v1/bids/${id}/force-ai`)
+}
+
+// 一键转AI：批量对所有待审核标讯强制 AI
+export function batchForceAi() {
+  return request.post('/api/v1/admin/ai/batch-force-ai', null, { timeout: 300000 })
+}
+
 // AI 兜底提取总开关（待审核页）
 export function fetchExtractSwitch() {
   return request.get('/api/v1/admin/ai/extract-switch')

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ChatLineRound, MagicStick, Clock, Search, ArrowRight, DataAnalysis, TrendCharts, Delete, Close } from '@element-plus/icons-vue'
@@ -64,10 +64,27 @@ function pickSuggestion(text: string) {
   doAiSearch()
 }
 
+// 搜索建议下拉的绝对定位（挂 body，脱离父容器 overflow 限制）
+const suggestBoxStyle = ref<Record<string, string>>({})
+
+function updateSuggestBoxPos() {
+  const el = document.querySelector('.search-input-wrap .el-input-group') as HTMLElement
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  suggestBoxStyle.value = {
+    position: 'fixed',
+    left: `${r.left}px`,
+    top: `${r.bottom + 4}px`,
+    width: `${r.width}px`,
+    zIndex: '9999',
+  }
+}
+
 // 输入框聚焦
 function onSearchFocus() {
   loadPersonalHistory()
   if (!hotSearches.value.length) loadHotSearches()
+  updateSuggestBoxPos()
   showSuggestions.value = true
 }
 
@@ -81,9 +98,14 @@ function onClickOutside(e: MouseEvent) {
 
 onMounted(() => {
   document.addEventListener('click', onClickOutside)
+  window.addEventListener('scroll', updateSuggestBoxPos, true)
+  window.addEventListener('resize', updateSuggestBoxPos)
 })
-onUnmounted(() => {
+
+onBeforeUnmount(() => {
   document.removeEventListener('click', onClickOutside)
+  window.removeEventListener('scroll', updateSuggestBoxPos, true)
+  window.removeEventListener('resize', updateSuggestBoxPos)
 })
 
 interface AIItem {
@@ -352,34 +374,6 @@ onMounted(async () => {
                 </el-button>
               </template>
             </el-input>
-            <!-- 搜索建议下拉 -->
-            <div v-if="showSuggestions && (personalHistory.length || hotSearches.length)" class="search-suggest-box">
-              <!-- 个人历史 -->
-              <div v-if="personalHistory.length" class="suggest-section">
-                <div class="suggest-header">
-                  <span><el-icon><Clock /></el-icon> 我的搜索历史</span>
-                  <span class="suggest-clear" @click.stop="clearHistory"><el-icon><Delete /></el-icon> 清空</span>
-                </div>
-                <div class="suggest-tags">
-                  <span v-for="h in personalHistory" :key="h" class="suggest-tag" @click.stop="pickSuggestion(h)">
-                    {{ h }}
-                    <el-icon class="tag-del" @click.stop="removeHistoryItem(h)"><Close /></el-icon>
-                  </span>
-                </div>
-              </div>
-              <!-- 热门搜索 -->
-              <div v-if="hotSearches.length" class="suggest-section">
-                <div class="suggest-header">
-                  <span><el-icon><TrendCharts /></el-icon> 热门搜索</span>
-                </div>
-                <div class="suggest-tags">
-                  <span v-for="(item, idx) in hotSearches" :key="item.query" class="suggest-tag hot" @click.stop="pickSuggestion(item.query)">
-                    <em class="hot-rank">{{ idx + 1 }}</em>
-                    {{ item.query }}
-                  </span>
-                </div>
-              </div>
-            </div>
           </div>
           <div class="hint"><el-icon><DataAnalysis /></el-icon> 会员专享 · 默认展示 70+ 高相关</div>
         </div>
@@ -491,25 +485,61 @@ onMounted(async () => {
 
     </div>
   </div>
+
+  <!-- 搜索建议下拉：用 Teleport 挂 body，不受父容器 overflow/高度限制 -->
+  <Teleport to="body">
+    <div
+      v-if="showSuggestions && (personalHistory.length || hotSearches.length)"
+      class="search-suggest-box"
+      :style="suggestBoxStyle"
+      @mousedown.prevent
+    >
+      <!-- 个人历史 -->
+      <div v-if="personalHistory.length" class="suggest-section">
+        <div class="suggest-header">
+          <span><el-icon><Clock /></el-icon> 我的搜索历史</span>
+          <span class="suggest-clear" @click.stop="clearHistory"><el-icon><Delete /></el-icon> 清空</span>
+        </div>
+        <div class="suggest-tags">
+          <span v-for="h in personalHistory" :key="h" class="suggest-tag" @click.stop="pickSuggestion(h)">
+            {{ h }}
+            <el-icon class="tag-del" @click.stop="removeHistoryItem(h)"><Close /></el-icon>
+          </span>
+        </div>
+      </div>
+      <!-- 热门搜索 -->
+      <div v-if="hotSearches.length" class="suggest-section">
+        <div class="suggest-header">
+          <span><el-icon><TrendCharts /></el-icon> 热门搜索</span>
+        </div>
+        <div class="suggest-tags">
+          <span v-for="(item, idx) in hotSearches" :key="item.query" class="suggest-tag hot" @click.stop="pickSuggestion(item.query)">
+            <em class="hot-rank">{{ idx + 1 }}</em>
+            {{ item.query }}
+          </span>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
-.ai-match-page { position: relative; min-height: calc(100vh - 64px); overflow: hidden; }
+.ai-match-page { position: relative; min-height: calc(100vh - 64px); }
 .ai-glow {
-  position: absolute; top: -120px; left: 50%; transform: translateX(-50%);
-  width: 900px; height: 500px; pointer-events: none;
+  position: absolute; top: -80px; left: 50%; transform: translateX(-50%);
+  width: 600px; height: 340px; pointer-events: none;
   background-image: url('@/assets/brand/bg-glow.svg');
   background-size: cover; opacity: 0.5;
 }
-.page-container { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 28px 16px; }
-.page-head { margin-bottom: 24px; }
-.page-head h1 { font-size: 28px; font-weight: 800; color: var(--ink-900); margin: 8px 0 5px; }
-.page-head p { color: var(--ink-500); font-size: 14px; }
+.page-container { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px 16px; }
+.page-head { margin-bottom: 12px; }
+.page-head h1 { font-size: 24px; font-weight: 800; color: var(--ink-900); margin: 4px 0 2px; }
+.page-head p { color: var(--ink-500); font-size: 13px; }
 
-.main-card { padding: 24px; border-radius: var(--r-md) !important; }
+.main-card { padding: 16px; border-radius: var(--r-md) !important; }
 .card-header { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; }
 
-.search-area { margin-bottom: 20px; }
+.search-area { margin-bottom: 12px; }
 /* 搜索框与按钮分离：四角统一圆角，避免左直角右圆角 */
 .search-area :deep(.el-input-group) { align-items: stretch; gap: 10px; }
 .search-area :deep(.el-input__wrapper) {
@@ -524,7 +554,7 @@ onMounted(async () => {
   border: none; border-radius: 12px; font-weight: 600; font-size: 15px;
   color: #fff !important;   /* 否则被占位灰 #909399 覆盖，蓝底上完全看不清 */
 }
-.hint { font-size: 12px; color: var(--ink-500); margin-top: 10px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 5px; }
+.hint { font-size: 12px; color: var(--ink-500); margin-top: 6px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 5px; }
 .hint :deep(.el-icon) { color: var(--accent-strong); }
 
 /* ===== 搜索建议下拉 ===== */

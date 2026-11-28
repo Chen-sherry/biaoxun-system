@@ -140,6 +140,104 @@ def set_extract_switch(payload: ExtractSwitchIn, db: Session = Depends(get_db),
     return ApiResponse.ok({"enabled": payload.enabled})
 
 
+# ============= 强制 AI：批量转 AI（待审核页一键转AI） =============
+
+@switch_router.post("/batch-force-ai", summary="一键转AI：批量对所有待审核标讯强制 AI 补提取")
+def batch_force_ai(db: Session = Depends(get_db), _: SysUser = AdminRole):
+    """遍历所有 status=0 的待审核标讯，对每条强制走规则+源站专用+AI 兜底（不等开关）。
+    返回统计：total / ok / failed / updated_fields_count。
+    """
+    import re as _re
+    from app.models.bid import BidInfo, BidSource
+    from app.services.data_clean import extract_fields_from_text, is_result_notice
+    from app.services.source_specs import fill_gaps_via_spec
+    from app.services.ai_extract import missing_fields, ai_extract_missing
+
+    FIELDS = ("tenderee", "agency", "budget", "deadline", "winner_unit",
+              "win_amount", "project_code", "region_code")
+
+    pending = db.query(BidInfo).filter(BidInfo.status == 0).all()
+    total = len(pending)
+    ok_count = 0
+    fail_count = 0
+    total_updated = 0
+    details = []
+
+    for b in pending:
+        ct = b.content_text or ""
+        if not ct:
+            fail_count += 1
+            details.append({"id": b.id, "msg": "正文为空"})
+            continue
+
+        current = {k: getattr(b, k, None) for k in FIELDS}
+        merged = dict(current)
+
+        # 规则 + 源站专用
+        try:
+            conn = db.get_bind().raw_connection()
+            try:
+                extra = extract_fields_from_text(b.title or "", ct,
+                                                  conn=conn.cursor(), current=merged)
+                merged.update(extra)
+            finally:
+                try: conn.close()
+                except Exception: pass
+        except Exception as e:
+            logger.warning("[batch-force] 规则提取失败 id=%s err=%s", b.id, str(e)[:120])
+
+        if b.source_id:
+            src = db.query(BidSource).filter(BidSource.id == b.source_id).first()
+            if src:
+                try:
+                    spec = fill_gaps_via_spec(
+                        src.code, b.content or ct, merged,
+                        allow_winner=is_result_notice(b.title or "", ct))
+                    merged.update(spec)
+                except Exception as e:
+                    logger.warning("[batch-force] 源站专用失败 id=%s err=%s", b.id, str(e)[:120])
+
+        # 强制 AI
+        miss = missing_fields({**merged, "content_text": ct})
+        ai_ok = True
+        if miss:
+            try:
+                ai_vals, ai_ok = ai_extract_missing(b.title or "", ct, miss)
+                if ai_ok:
+                    b.ai_processed = 1
+                    for f in ("tenderee", "winner_unit", "win_amount"):
+                        if ai_vals.get(f) is not None:
+                            merged[f] = ai_vals[f]
+            except Exception as e:
+                ai_ok = False
+                logger.warning("[batch-force] AI 调用异常 id=%s err=%s", b.id, str(e)[:120])
+
+        updated = {}
+        for k, v in merged.items():
+            if v and current.get(k) in (None, "", 0):
+                setattr(b, k, v)
+                updated[k] = v
+        total_updated += len(updated)
+
+        # AI ok → 直接过
+        if ai_ok:
+            ok_count += 1
+            b.status = 1
+            details.append({"id": b.id, "updated": len(updated), "fields": list(updated.keys()), "auto_approved": True})
+        else:
+            fail_count += 1
+            details.append({"id": b.id, "updated": len(updated), "ai_ok": False})
+
+    db.commit()
+    return ApiResponse.ok({
+        "total": total,
+        "ok": ok_count,
+        "failed": fail_count,
+        "updated_fields": total_updated,
+        "details": details[:200],  # 最多返回 200 条明细，避免 payload 过大
+    })
+
+
 # ============= 历史 + 回滚 =============
 
 @router.get("/{key:path}/snapshots", summary="某条设置的变更历史（最近 20 条）")

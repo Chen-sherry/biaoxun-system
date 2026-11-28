@@ -82,6 +82,16 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
 <style scoped>
 .detail-page { max-width: 1000px; margin: 26px auto; padding: 0 24px 20px; }
 .page-head { margin-bottom: 8px; }
+/* 强制返回按钮横排，避免"返回"两字被压窄成竖排 */
+.page-head :deep(.el-page-header__back) {
+  display: inline-flex !important; align-items: center !important; gap: 4px !important;
+  min-width: 80px !important;
+}
+.page-head :deep(.el-page-header__title) {
+  writing-mode: horizontal-tb !important;
+  white-space: nowrap !important;
+  display: inline-block !important;
+}
 .title { font-size: 23px; font-weight: 700; color: var(--ink-900); margin: 0 0 10px; line-height: 1.5; }
 .meta { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; color: var(--ink-500); font-size: 13px; margin-top: 10px; }
 .meta span { display: inline-flex; align-items: center; gap: 4px; }

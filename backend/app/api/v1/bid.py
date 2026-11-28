@@ -294,6 +294,86 @@ def reextract_bid(
     return ApiResponse.ok({"updated": updated, "msg": f"补全 {len(updated)} 个字段"})
 
 
+@router.post("/{bid_id}/force-ai", response_model=ApiResponse, summary="强制走 AI 提取（无视开关）")
+def force_ai_extract(
+    bid_id: int,
+    db: Session = Depends(get_db),
+    _: SysUser = Depends(require_role("admin", "admin_role")),
+):
+    """无论总开关是否开启，都强制调 AI 补提取缺失字段。规则/源站专用先跑一遍，
+    然后强制 AI 兜底（不等开关）。只补空字段，不覆盖已有人工值。"""
+    import re as _re
+    from app.models.bid import BidSource
+    from app.services.data_clean import extract_fields_from_text, is_result_notice
+    from app.services.source_specs import fill_gaps_via_spec
+    from app.services.ai_extract import missing_fields, ai_extract_missing
+
+    b = db.query(BidInfo).filter(BidInfo.id == bid_id).first()
+    if not b:
+        raise HTTPException(status_code=404, detail="标讯不存在")
+    ct = b.content_text or ""
+    if not ct:
+        return ApiResponse.ok({"updated": {}, "ai_ok": False, "msg": "正文为空，无法转 AI"})
+
+    FIELDS = ("tenderee", "agency", "budget", "deadline", "winner_unit",
+              "win_amount", "project_code", "region_code")
+    current = {k: getattr(b, k, None) for k in FIELDS}
+    merged = dict(current)
+
+    # 规则 + 源站专用（和 reextract 一样）
+    conn = db.get_bind().raw_connection()
+    try:
+        extra = extract_fields_from_text(b.title or "", ct, conn=conn.cursor(), current=merged)
+        merged.update(extra)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    if b.source_id:
+        src = db.query(BidSource).filter(BidSource.id == b.source_id).first()
+        if src:
+            spec = fill_gaps_via_spec(
+                src.code, b.content or ct, merged,
+                allow_winner=is_result_notice(b.title or "", ct))
+            merged.update(spec)
+
+    # 强制 AI（不等开关）—— 把仍缺失的关键字段交给 AI
+    miss = missing_fields({**merged, "content_text": ct})
+    ai_ok = True
+    if miss:
+        ai_vals, ai_ok = ai_extract_missing(b.title or "", ct, miss)
+        if ai_ok:
+            b.ai_processed = 1
+            for f in ("tenderee", "winner_unit", "win_amount"):
+                if ai_vals.get(f) is not None:
+                    merged[f] = ai_vals[f]
+
+    updated = {}
+    for k, v in merged.items():
+        if v and current.get(k) in (None, "", 0):
+            setattr(b, k, v)
+            updated[k] = v
+
+    # AI 确认提完（ok）→ 直接过；AI 失败（ok=False）→ 留待审核
+    auto_approved = False
+    if ai_ok:
+        b.status = 1
+        auto_approved = True
+
+    db.commit()
+    db.refresh(b)
+
+    if auto_approved:
+        msg = f"AI 补全 {len(updated)} 个字段，已自动通过"
+    elif ai_ok:
+        msg = f"AI 没找到更多可补的字段，已自动通过"
+    else:
+        msg = "AI 调用失败，请稍后重试"
+    return ApiResponse.ok({"updated": updated, "ai_ok": ai_ok, "auto_approved": auto_approved, "msg": msg})
+
+
 @router.post("/{bid_id}/audit", response_model=ApiResponse, summary="审核通过")
 def audit_bid(
     bid_id: int,
